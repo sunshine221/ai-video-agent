@@ -1,6 +1,6 @@
 'use client';
 
-import { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ImageOff, Code2 } from 'lucide-react';
 import { SubtitleLayer } from '@/components/player/subtitle-layer';
 import { splitSubtitles, type SubtitleCue } from '@/lib/subtitle';
@@ -236,8 +236,62 @@ function ImageFrame({
   );
 }
 
-// ===== HtmlFrame：iframe srcdoc 沙箱 + 看门狗 =====
+// ===== HtmlFrame：iframe srcdoc 沙箱 + 看门狗 + 动态尺寸缩放（cover 模式）=====
+/** iframe 内容"设计尺寸"（postMessage 失败时的兜底值） */
+const DEFAULT_DESIGN_SIZE = { w: 1280, h: 720 };
+
 function HtmlFrame({ htmlCode, frameId }: { htmlCode?: string; frameId?: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  /** iframe 内部 HTML 的"设计尺寸"，由 iframe 通过 postMessage 上报 */
+  const [designSize, setDesignSize] = useState<{ w: number; h: number }>(DEFAULT_DESIGN_SIZE);
+
+  // ⭐ 监听 iframe 的 postMessage 上报（sandbox 阻止我们直接读 contentDocument）
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.data && e.data.type === '__ai_video_iframe_size') {
+        const w = Number(e.data.w);
+        const h = Number(e.data.h);
+        if (w > 0 && h > 0 && w < 10000 && h < 10000) {
+          setDesignSize({ w, h });
+        }
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
+  // ResizeObserver：容器尺寸变化时重新计算 scale + 显式 left/top 居中
+  useEffect(() => {
+    const container = containerRef.current;
+    const iframe = iframeRef.current;
+    if (!container || !iframe) return;
+
+    const update = () => {
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+      if (cw === 0 || ch === 0) return;
+
+      const baseW = designSize.w;
+      const baseH = designSize.h;
+      // ⭐ cover 模式：max 让缩放后的元素至少覆盖一边，溢出被 overflow:hidden 裁剪
+      const scale = Math.max(cw / baseW, ch / baseH);
+      const scaledW = baseW * scale;
+      const scaledH = baseH * scale;
+      // ⭐ 关键：transform-origin: 0 0 + left/top 显式居中
+      // （不用 transform-origin: center，因为 flex 居中和它会冲突）
+      iframe.style.transformOrigin = '0 0';
+      iframe.style.transform = `scale(${scale})`;
+      iframe.style.left = `${(cw - scaledW) / 2}px`;
+      iframe.style.top = `${(ch - scaledH) / 2}px`;
+    };
+
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [designSize]);
+
   if (!htmlCode) {
     return (
       <div className="flex h-full items-center justify-center text-slate-400">
@@ -248,17 +302,27 @@ function HtmlFrame({ htmlCode, frameId }: { htmlCode?: string; frameId?: string 
       </div>
     );
   }
+
   const safeHtml = useMemo(() => wrapHtmlWithWatchdog(sanitizeAiHtml(htmlCode)), [htmlCode]);
   return (
-    <div className="html-frame-container absolute inset-0">
+    <div ref={containerRef} className="html-frame-container">
       <iframe
+        ref={iframeRef}
         key={frameId}
         title="HTML 分镜动画"
         srcDoc={safeHtml}
         sandbox="allow-scripts"
         loading="lazy"
         referrerPolicy="no-referrer"
-        className="h-full w-full bg-white"
+        className="block bg-white"
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: `${designSize.w}px`,
+          height: `${designSize.h}px`,
+          border: 0,
+        }}
       />
     </div>
   );

@@ -58,6 +58,14 @@
   animation: frame-fade-out 500ms ease-out forwards;
 }
 
+/* HTML 动画 iframe 容器 — JS 动态设置 left/top + transform: scale */
+.html-frame-container {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #0f172a;
+}
+
 .subtitle-shadow {
   text-shadow:
     0 2px 4px rgba(0, 0, 0, 0.8),

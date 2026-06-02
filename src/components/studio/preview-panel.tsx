@@ -18,7 +18,9 @@ interface PreviewPanelProps {
 export function PreviewPanel({ project, onProjectChange, onFrameSelect }: PreviewPanelProps) {
   const selectedFrameId = useStudioStore(s => s.selectedFrameId);
   const showSubtitle = useStudioStore(s => s.showSubtitle);
-  const previewRef = useRef<HTMLDivElement>(null);
+  // ⭐ ref 指向 PreviewCanvas 内容本身（不是外层 wrapper），
+  // 这样全屏时不会带 padding/rounded border，画面才能真正铺满
+  const previewCanvasRef = useRef<HTMLDivElement>(null);
 
   // 大纲更新时默认选中第一帧
   const outlineFirstId = project.outline?.frames?.[0]?.id;
@@ -69,8 +71,9 @@ export function PreviewPanel({ project, onProjectChange, onFrameSelect }: Previe
   return (
     <div className="flex h-full flex-col bg-slate-50">
       <PreviewToolbar project={project} onProjectChange={onProjectChange} onRefresh={refresh} />
-      <div ref={previewRef} className="flex-1 overflow-hidden p-4">
+      <div className="flex-1 overflow-hidden p-4">
         <PreviewCanvas
+          ref={previewCanvasRef}
           project={project}
           frameSource={displayFrameSource}
           showSubtitle={showSubtitle}
@@ -88,7 +91,7 @@ export function PreviewPanel({ project, onProjectChange, onFrameSelect }: Previe
         audioRef={player.audioRef}
         onTogglePlay={player.togglePlay}
         onStop={player.stop}
-        previewRef={previewRef}
+        previewRef={previewCanvasRef}
         onEnterFullscreenAutoPlay={() => {
           if (!player.isPlaying) player.play();
         }}

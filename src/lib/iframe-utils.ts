@@ -29,8 +29,10 @@ export function wrapHtmlWithWatchdog(innerHtml: string, watchdogMs = WATCHDOG_DE
 <meta name="viewport" content="width=1280, initial-scale=1" />
 <style>
   *, *::before, *::after { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; background: #fff; }
-  body { display: flex; align-items: center; justify-content: center; }
+  html, body { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; background: transparent; }
+  body { display: block; position: relative; }
+  /* ⭐ 把 AI 内容包在唯一容器里，让容器铺满 body — 既保证铺满，又不破坏 AI 内部各元素的尺寸/定位 */
+  .ai-stage { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; }
   /* 看门狗触发后的样式 */
   body.frozen *, body.frozen *::before, body.frozen *::after {
     animation: none !important;
@@ -67,11 +69,42 @@ ${extracted.head}
     }
     var setTimeoutOrig = window.setTimeout;
     setTimeoutOrig(freeze, WATCHDOG_MS);
+
+    // ⭐ 把内容"设计尺寸"上报给父窗口（父窗口用这个来计算 transform: scale）
+    function reportSize() {
+      try {
+        var root = document.documentElement;
+        var body = document.body;
+        var w = Math.max(
+          root.scrollWidth || 0,
+          body ? (body.scrollWidth || 0) : 0,
+          root.clientWidth || 0
+        );
+        var h = Math.max(
+          root.scrollHeight || 0,
+          body ? (body.scrollHeight || 0) : 0,
+          root.clientHeight || 0
+        );
+        if (w > 0 && h > 0 && w < 10000 && h < 10000) {
+          parent.postMessage({ type: '__ai_video_iframe_size', w: w, h: h }, '*');
+        }
+      } catch (e) {}
+    }
+    // 多次上报，确保拿到准确尺寸（动画/字体加载后尺寸可能变化）
+    setTimeoutOrig(reportSize, 50);
+    setTimeoutOrig(reportSize, 200);
+    setTimeoutOrig(reportSize, 500);
+    setTimeoutOrig(reportSize, 1000);
+    if (document.readyState === 'complete') {
+      reportSize();
+    } else {
+      window.addEventListener('load', reportSize);
+    }
   })();
 </script>
 </head>
 <body>
-${extracted.body}
+<div class="ai-stage">${extracted.body}</div>
 </body>
 </html>`;
 }

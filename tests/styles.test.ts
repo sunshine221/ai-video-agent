@@ -24,7 +24,9 @@ describe('STYLE_PRESETS', () => {
 
 describe('getStyleById', () => {
   it('能查到已有风格', () => {
-    expect(getStyleById('glassmorphism')?.name).toBe('玻璃拟态');
+    expect(getStyleById('cyber-clean')?.name).toBe('科技博主');
+    expect(getStyleById('terminal-matrix')?.name).toBe('黑客风');
+    expect(getStyleById('warm-story')?.name).toBe('暖色系');
   });
 
   it('未传或未知 id 返回 undefined', () => {
