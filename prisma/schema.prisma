@@ -1,0 +1,39 @@
+// AI 视频制作智能体 — Prisma schema
+// 数据库：MySQL 8.0+，需要 utf8mb4 字符集
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  uuid        String    @id @default(uuid())
+  title       String
+  type        String // "image" | "html"
+  styleId     String? // HTML 模式选中的视觉风格 id
+  outline     Json? // 视频大纲：{title, totalDuration, globalStyle?, frames: [...]}
+  videoSource Json? // 视频源：{frames: [{id, imagePath?, audioPath?, audioDuration?, htmlCode?}]}
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  messages    Message[]
+
+  @@index([createdAt])
+  @@map("project")
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  projectId String
+  role      String // "user" | "assistant"
+  content   String   @db.Text
+  metadata  Json? // 大纲卡片/分镜卡片/进度等结构化数据
+  createdAt DateTime @default(now())
+  project   Project  @relation(fields: [projectId], references: [uuid], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@map("message")
+}
