@@ -2,6 +2,9 @@
 
 一个基于 Next.js 的 AI 视频创作工作台。输入一句主题或一段需求描述，系统会自动完成意图识别、大纲生成、分镜生成、旁白配音、字幕同步和预览导出。
 
+> 提示：
+> 本项目由 `MiniMax-M3` 模型辅助开发完成，当前定位为实验性开源项目，可能仍存在一些 Bug 或边界场景问题，欢迎体验、测试并反馈。
+
 项目当前支持两种创作模式：
 
 - `image`：文生图分镜，适合知识讲解、口播轮播类视频
@@ -31,6 +34,14 @@
 - 支持长任务中断，已完成内容会保留
 - 本地保存图片、音频等产物
 - 浏览器内预览，并支持 MP4 导出
+
+## 更多完整功能
+
+如果你希望体验更丰富、更完整、更稳定的 AI 动画与视频创作能力，欢迎访问 [SVG Animate](https://svganimate.ai)：
+
+![SVG Animate 预览](docs/images/svganimate-preview.png)
+
+相较于当前这个实验性仓库版本，`svganimate.ai` 提供了更完整的在线创作体验、更多可视化能力和更成熟的工作流。
 
 ## 内置三种风格
 
@@ -112,8 +123,6 @@ npx prisma db push
 ```bash
 npx prisma migrate deploy
 ```
-
-数据库模型定义见 [prisma/schema.prisma](/Users/xuanyuan/Documents/AI-Program/minimax_test/M3/ai-video-test/prisma/schema.prisma)。
 
 ### 5. 启动项目
 
@@ -220,6 +229,12 @@ npm run db:studio
 - 建议把 `data/images` 和 `data/audio` 作为运行时产物处理
 - 如果要公开演示，先确认你使用的模型网关、图片接口和语音接口都有可再分发权限
 - 如果打算部署到服务器，优先使用正式的 Prisma migration 流程，而不是仅靠 `db push`
+
+## 关注公众号
+
+如果你对 AI 编程、智能体、可视化内容创作或这个项目背后的工作流感兴趣，欢迎关注公众号获取后续更新：
+
+![公众号二维码](docs/images/wechat-qr.jpg)
 
 ## 测试
 
