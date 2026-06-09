@@ -14,6 +14,7 @@ interface UsePlayerResult {
   stop: () => void;
   pause: () => void;
   seekToFrame: (frameId: string) => void;
+  playFromIndex: (index: number) => void;
 }
 
 /**
@@ -194,6 +195,24 @@ export function usePlayer(project: ProjectDetail, initialIndex: number): UsePlay
     [project.outline, setSelectedFrameId],
   );
 
+  const playFromIndex = useCallback(
+    (index: number) => {
+      const outline = project.outline;
+      if (!outline || outline.frames.length === 0) return;
+      const nextIndex = Math.max(0, Math.min(index, outline.frames.length - 1));
+      const a = audioRef.current;
+      if (a) {
+        a.pause();
+        a.currentTime = 0;
+      }
+      setCurrentIndex(nextIndex);
+      setCurrentTime(0);
+      setSelectedFrameId(outline.frames[nextIndex].id);
+      setIsPlaying(true);
+    },
+    [project.outline, setSelectedFrameId],
+  );
+
   return {
     isPlaying,
     currentTime,
@@ -204,5 +223,6 @@ export function usePlayer(project: ProjectDetail, initialIndex: number): UsePlay
     stop,
     pause,
     seekToFrame,
+    playFromIndex,
   };
 }

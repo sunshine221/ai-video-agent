@@ -1,10 +1,12 @@
 'use client';
 
-import { Play, Pause, Square, Maximize2, Minimize2 } from 'lucide-react';
+import { Play, Pause, Square, Maximize2, Minimize2, Download, Loader2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatDuration, cn } from '@/lib/utils';
 import type { ProjectDetail, FrameSource } from '@/types';
 import { useEffect, useRef, useState } from 'react';
+
+type ExportStatus = 'idle' | 'preparing' | 'prompting' | 'countdown' | 'recording' | 'finalizing' | 'failed';
 
 interface PlayerBarProps {
   project: ProjectDetail;
@@ -19,6 +21,10 @@ interface PlayerBarProps {
   previewRef?: React.RefObject<HTMLElement>;
   /** 进入全屏后自动开始播放 */
   onEnterFullscreenAutoPlay?: () => void;
+  exportStatus: ExportStatus;
+  exportMessage: string;
+  onExport: () => void;
+  onCancelExport: () => void;
 }
 
 export function PlayerBar({
@@ -32,6 +38,10 @@ export function PlayerBar({
   onStop,
   previewRef,
   onEnterFullscreenAutoPlay,
+  exportStatus,
+  exportMessage,
+  onExport,
+  onCancelExport,
 }: PlayerBarProps) {
   const [isFs, setIsFs] = useState(false);
   const fsContainerRef = useRef<HTMLDivElement>(null);
@@ -48,6 +58,7 @@ export function PlayerBar({
     project.videoSource?.frames[currentIndex] ?? null;
   const hasFrames = (project.outline?.frames.length ?? 0) > 0;
   const progressPct = totalDuration > 0 ? (currentTime / totalDuration) * 100 : 0;
+  const isExportBusy = exportStatus !== 'idle' && exportStatus !== 'failed';
 
   async function handleFullscreen() {
     const target = (previewRef?.current ?? fsContainerRef.current) as HTMLElement | null;
@@ -77,7 +88,7 @@ export function PlayerBar({
           size="icon"
           variant={isPlaying ? 'default' : 'secondary'}
           onClick={onTogglePlay}
-          disabled={!hasFrames}
+          disabled={!hasFrames || isExportBusy}
           title={isPlaying ? '暂停' : '播放（连续播放所有分镜）'}
         >
           {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
@@ -86,7 +97,7 @@ export function PlayerBar({
           size="icon"
           variant="ghost"
           onClick={onStop}
-          disabled={!hasFrames}
+          disabled={!hasFrames || isExportBusy}
           title="停止"
           className={isFs ? 'hover:bg-slate-800 text-white' : ''}
         >
@@ -109,12 +120,42 @@ export function PlayerBar({
           </span>
         </div>
 
+        {exportMessage ? (
+          <div className={cn('max-w-56 truncate text-xs', exportStatus === 'failed' ? 'text-red-500' : isFs ? 'text-slate-300' : 'text-muted-foreground')}>
+            {exportMessage}
+          </div>
+        ) : null}
+
+        {isExportBusy ? (
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={onCancelExport}
+            title="取消导出"
+          >
+            <X className="mr-1 h-3.5 w-3.5" />
+            取消导出
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onExport}
+            disabled={!hasFrames}
+            title="录屏导出视频"
+          >
+            <Download className="mr-1 h-3.5 w-3.5" />
+            导出视频
+          </Button>
+        )}
+
         <Button
           size="icon"
           variant="ghost"
           onClick={handleFullscreen}
           title={isFs ? '退出全屏' : '全屏预览区（自动播放）'}
           className={isFs ? 'hover:bg-slate-800 text-white' : ''}
+          disabled={isExportBusy}
         >
           {isFs ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
         </Button>

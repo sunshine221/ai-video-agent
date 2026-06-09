@@ -78,6 +78,46 @@
   height: 100%;
   border: 0;
   display: block;
+  background: transparent;
+}
+
+.preview-fullscreen-stage:fullscreen {
+  background: #000;
+}
+
+.preview-fullscreen-stage:-webkit-full-screen {
+  background: #000;
+}
+
+.preview-fullscreen-stage:fullscreen .preview-stage {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.preview-fullscreen-stage:-webkit-full-screen .preview-stage {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* Recording mode: hide all page UI, show only the recording target */
+body.recording-mode * {
+  visibility: hidden !important;
+}
+
+body.recording-mode [data-recording-target="true"],
+body.recording-mode [data-recording-target="true"] * {
+  visibility: visible !important;
+}
+
+body.recording-mode {
+  background: #000 !important;
+}
+
+body.recording-mode [data-recording-target="true"] .preview-stage {
+  border-radius: 0 !important;
+  box-shadow: none !important;
 }
 
 /* Storyboard strip */

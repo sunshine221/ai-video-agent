@@ -1,9 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, Images, Code2, Loader2 } from 'lucide-react';
+import { Trash2, Images, Code2, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -108,7 +107,7 @@ export function ProjectList() {
       </div>
 
       <ScrollArea className="flex-1">
-        <div className="space-y-1 p-2">
+        <div className="w-full max-w-full space-y-1 p-2">
           {isLoading ? (
             <div className="flex justify-center py-8 text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -124,21 +123,34 @@ export function ProjectList() {
                 <div
                   key={p.uuid}
                   className={cn(
-                    'group relative flex items-center gap-2 rounded-lg border px-2 py-2 transition-colors',
+                    'group grid w-full min-w-0 grid-cols-[auto,minmax(0,1fr),auto] items-start gap-2 rounded-lg border px-3 py-2 transition-colors',
                     active
                       ? 'border-primary bg-primary/5'
                       : 'border-transparent hover:bg-accent',
                   )}
                 >
-                  <Link href={`/projects/${p.uuid}`} className="flex flex-1 items-center gap-2 min-w-0">
+                  <div
+                    role="link"
+                    tabIndex={0}
+                    onClick={() => router.push(`/projects/${p.uuid}`)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        router.push(`/projects/${p.uuid}`);
+                      }
+                    }}
+                    className="col-span-2 grid min-w-0 cursor-pointer grid-cols-[auto,minmax(0,1fr)] items-start gap-2"
+                  >
                     {p.type === 'image' ? (
-                      <Images className="h-4 w-4 flex-shrink-0 text-blue-600" />
+                      <Images className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-600" />
                     ) : (
-                      <Code2 className="h-4 w-4 flex-shrink-0 text-purple-600" />
+                      <Code2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-purple-600" />
                     )}
-                    <div className="flex-1 min-w-0">
-                      <div className="truncate text-sm font-medium">{p.title}</div>
-                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <div className="min-w-0">
+                      <div className="line-clamp-2 break-words text-sm font-medium leading-5">
+                        {p.title}
+                      </div>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
                         <span>{formatRelativeTime(p.createdAt)}</span>
                         {p.hasOutline && (
                           <>
@@ -148,14 +160,15 @@ export function ProjectList() {
                         )}
                       </div>
                     </div>
-                  </Link>
+                  </div>
                   <button
                     type="button"
                     onClick={e => {
                       e.preventDefault();
+                      e.stopPropagation();
                       if (confirm('确定要删除这个项目吗？')) deleteMut.mutate(p.uuid);
                     }}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    className="mt-0.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
                     title="删除项目"
                   >
                     <Trash2 className="h-3.5 w-3.5" />

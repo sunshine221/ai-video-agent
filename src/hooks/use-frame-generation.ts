@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
+import { useStudioStore } from '@/stores/studio-store';
 import type { ProjectDetail } from '@/types';
 
 export interface GenerationProgress {
@@ -24,10 +25,12 @@ export function useFrameGeneration({ project, onProjectRefresh }: UseFrameGenera
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState<GenerationProgress | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const setGeneratingFrame = useStudioStore(s => s.setGeneratingFrame);
 
   const start = useCallback(async (frameIds?: string[]) => {
     setGenerating(true);
     setProgress({ total: 0, current: 0, phase: 'image' });
+    setGeneratingFrame(null, null);
     const url = project.type === 'image' ? '/api/frames/image' : '/api/frames/html';
     abortRef.current = new AbortController();
 
@@ -79,6 +82,7 @@ export function useFrameGeneration({ project, onProjectRefresh }: UseFrameGenera
       }
     } finally {
       setGenerating(false);
+      setGeneratingFrame(null, null);
       // 保留 progress 几秒以便用户看到完成状态
       setTimeout(() => setProgress(null), 3000);
     }
@@ -89,6 +93,7 @@ export function useFrameGeneration({ project, onProjectRefresh }: UseFrameGenera
           setProgress({ total: payload.total, current: 0, phase: project.type === 'image' ? 'image' : 'html' });
           break;
         case 'progress':
+          setGeneratingFrame(payload.frameId || null, payload.phase || 'image');
           setProgress({
             total: payload.total,
             current: payload.current,
@@ -97,6 +102,7 @@ export function useFrameGeneration({ project, onProjectRefresh }: UseFrameGenera
           });
           break;
         case 'frame_done':
+          setGeneratingFrame(null, 'done');
           setProgress({
             total: payload.total,
             current: payload.current,
@@ -110,6 +116,7 @@ export function useFrameGeneration({ project, onProjectRefresh }: UseFrameGenera
           setProgress(p => (p ? { ...p, message: payload.message } : null));
           break;
         case 'skip':
+          setGeneratingFrame(null, 'done');
           setProgress({
             total: payload.total,
             current: payload.current,
@@ -118,9 +125,11 @@ export function useFrameGeneration({ project, onProjectRefresh }: UseFrameGenera
           });
           break;
         case 'aborted':
+          setGeneratingFrame(null, null);
           setProgress(p => (p ? { ...p, aborted: true, message: payload.reason } : null));
           break;
         case 'done':
+          setGeneratingFrame(null, 'done');
           setProgress({
             total: payload.total,
             current: payload.completed,
@@ -129,10 +138,11 @@ export function useFrameGeneration({ project, onProjectRefresh }: UseFrameGenera
           break;
       }
     }
-  }, [project.type, project.uuid, onProjectRefresh]);
+  }, [project.type, project.uuid, onProjectRefresh, setGeneratingFrame]);
 
   const abort = useCallback(async () => {
     if (abortRef.current) abortRef.current.abort();
+    setGeneratingFrame(null, null);
     await fetch(
       project.type === 'image' ? '/api/frames/image/abort' : '/api/frames/html/abort',
       {
@@ -141,7 +151,7 @@ export function useFrameGeneration({ project, onProjectRefresh }: UseFrameGenera
         body: JSON.stringify({ projectId: project.uuid }),
       },
     );
-  }, [project.type, project.uuid]);
+  }, [project.type, project.uuid, setGeneratingFrame]);
 
   return { generating, progress, start, abort };
 }

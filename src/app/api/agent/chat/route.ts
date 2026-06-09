@@ -1,19 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { v4 as uuid } from 'uuid';
 import { prisma } from '@/lib/db';
 import { analyzeIntent } from '@/lib/ai/intent';
 import { generateOutline } from '@/lib/ai/outline';
-import type { IntentResult, ProjectDetail, Outline, VideoSource } from '@/types';
+import {
+  modifyFrameContent,
+  generateNewFrameContent,
+  insertFrameIntoOutline,
+  realignVideoSource,
+} from '@/lib/ai/frame-ops';
+import { generateAndSaveImage } from '@/lib/ai/image';
+import { generateFrameHtml } from '@/lib/ai/html';
+import { generateAndSaveTTS } from '@/lib/ai/tts';
+import { getStyleById, getDefaultStyle } from '@/lib/styles/presets';
+import type {
+  IntentResult,
+  ProjectDetail,
+  Outline,
+  VideoSource,
+  FrameOutline,
+  ProjectType,
+} from '@/types';
 
 const schema = z.object({
   projectId: z.string().uuid(),
   content: z.string().min(1).max(2000),
 });
 
+const RECENT_HISTORY_ROUNDS = 3;
+
 /**
  * POST /api/agent/chat
  * Agent 入口：接收用户提示词，意图分析后路由到具体能力。
+ *
+ * 路由：
+ * - generate_outline / regenerate_outline → 生成新大纲
+ * - regenerate_frame → 修改某个分镜的内容 + 重新生成画面/声音
+ * - add_frame → 生成新分镜 + 插入 + 重新生成画面/声音
+ * - delete_frame → 占位（暂未实现）
+ * - unknown → 友好提示
  */
 export async function POST(req: NextRequest) {
   try {
@@ -42,6 +67,7 @@ export async function POST(req: NextRequest) {
     let assistantContent = '';
     let assistantMetadata: any = { kind: 'text' };
     let projectUpdate: Partial<{ title: string; outline: Outline; videoSource: VideoSource }> = {};
+    const conversationContext = await buildConversationContext(projectId, RECENT_HISTORY_ROUNDS);
 
     try {
       intent = await analyzeIntent(projectId, content);
@@ -54,29 +80,64 @@ export async function POST(req: NextRequest) {
     switch (intent.action) {
       case 'generate_outline':
       case 'regenerate_outline': {
-        const outline = await generateOutline(project.type as 'image' | 'html', content);
+        const outline = await generateOutline(project.type as 'image' | 'html', content, {
+          conversationContext: intent.action === 'regenerate_outline' ? conversationContext : undefined,
+          currentOutline: intent.action === 'regenerate_outline'
+            ? ((project.outline as unknown as Outline) ?? null)
+            : null,
+        });
         projectUpdate.outline = outline;
-        // 第一次生成大纲时把项目标题也更新
         if (intent.action === 'generate_outline' && !project.outline) {
           projectUpdate.title = outline.title;
         }
-        // 新大纲意味着旧的视频源作废
         projectUpdate.videoSource = { frames: outline.frames.map(f => ({ id: f.id })) };
         assistantContent = `已为您生成大纲《${outline.title}》，共 ${outline.frames.length} 个分镜。`;
         assistantMetadata = { kind: 'outline', outline };
         break;
       }
-      case 'add_frame':
-        assistantContent = '新增分镜功能开发中，您可以先让我"重新生成大纲"，或者在完整大纲弹窗中查看已有分镜。';
+
+      case 'regenerate_frame': {
+        const result = await handleRegenerateFrame({
+          projectId,
+          projectType: project.type as ProjectType,
+          styleId: project.styleId,
+          currentOutline: (project.outline as unknown as Outline) ?? null,
+          currentVideoSource: (project.videoSource as unknown as VideoSource) ?? { frames: [] },
+          params: intent.params,
+          conversationContext,
+        });
+        if (result.outline) projectUpdate.outline = result.outline;
+        if (result.videoSource) projectUpdate.videoSource = result.videoSource;
+        assistantContent = result.message;
         break;
+      }
+
+      case 'add_frame': {
+        const result = await handleAddFrame({
+          projectId,
+          projectType: project.type as ProjectType,
+          styleId: project.styleId,
+          currentOutline: (project.outline as unknown as Outline) ?? null,
+          currentVideoSource: (project.videoSource as unknown as VideoSource) ?? { frames: [] },
+          params: intent.params,
+          userHint: content,
+          conversationContext,
+        });
+        if (result.outline) projectUpdate.outline = result.outline;
+        if (result.videoSource) projectUpdate.videoSource = result.videoSource;
+        assistantContent = result.message;
+        if (result.outline) {
+          assistantMetadata = { kind: 'outline', outline: result.outline };
+        }
+        break;
+      }
+
       case 'delete_frame':
-        assistantContent = '删除分镜功能开发中。';
+        assistantContent = '删除分镜功能开发中，您可以先让我"重新生成大纲"再选。';
         break;
-      case 'regenerate_frame':
-        assistantContent = '重生成分镜功能开发中。您可以在右侧预览区上方点击"查看完整大纲"逐个重新生成。';
-        break;
+
       default:
-        assistantContent = `抱歉，我暂时还不理解您的指令。\n\n我能做的：\n• 创作新视频（输入主题即可）\n• 重新生成大纲\n• 在完整大纲弹窗中逐个重生成画面或旁白\n\n请试试："做一个 3 分钟介绍黑洞的视频"`;
+        assistantContent = `抱歉，我暂时还不理解您的指令。\n\n我能做的：\n• 创作新视频（输入主题即可）\n• 重新生成大纲\n• 修改某个分镜（"第 3 镜的旁白里加上年份"）\n• 新增分镜（"在第 2 镜后面加一个分镜讲讲爱因斯坦"）\n\n请试试："做一个 3 分钟介绍黑洞的视频"`;
     }
 
     // 4) 更新项目（如有）
@@ -123,5 +184,345 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// suppress unused import warning for uuid (will be used in extended handlers)
-void uuid;
+// =============================================================================
+// 内部：修改分镜
+// =============================================================================
+
+async function handleRegenerateFrame(opts: {
+  projectId: string;
+  projectType: ProjectType;
+  styleId: string | null;
+  currentOutline: Outline | null;
+  currentVideoSource: VideoSource;
+  params: Record<string, unknown>;
+  conversationContext: string;
+}): Promise<{
+  outline?: Outline;
+  videoSource?: VideoSource;
+  message: string;
+}> {
+  const { projectId, projectType, styleId, currentOutline, currentVideoSource, params, conversationContext } = opts;
+
+  if (!currentOutline) {
+    return { message: '当前项目还没有大纲，请先生成大纲。' };
+  }
+
+  // 1-based frameIndex → 0-based
+  const frameIndex1 = Number(params.frameIndex) || 0;
+  const frameIndex0 = frameIndex1 - 1;
+  if (frameIndex0 < 0 || frameIndex0 >= currentOutline.frames.length) {
+    return { message: `分镜编号 ${frameIndex1} 不存在（当前共 ${currentOutline.frames.length} 个分镜）。` };
+  }
+
+  const targetFrame = currentOutline.frames[frameIndex0];
+  const modification = String(params.modification || '').trim();
+
+  // 1) AI 修改分镜内容（narration / prompts）
+  let updated: Partial<FrameOutline> = {};
+  try {
+    updated = await modifyFrameContent({
+      type: projectType,
+      outline: currentOutline,
+      frameIndex: frameIndex0,
+      userModification: modification,
+      conversationContext,
+    });
+  } catch (err) {
+    console.error('[modifyFrameContent] 失败', err);
+    return { message: `AI 修改分镜内容失败：${(err as Error).message}` };
+  }
+
+  const newFrames = currentOutline.frames.map((f, i) =>
+    i === frameIndex0
+      ? {
+          ...f,
+          title: updated.title || f.title,
+          narration: updated.narration || f.narration,
+          imagePrompt: projectType === 'image' ? (updated.imagePrompt || f.imagePrompt) : f.imagePrompt,
+          htmlPrompt: projectType === 'html' ? (updated.htmlPrompt || f.htmlPrompt) : f.htmlPrompt,
+        }
+      : f,
+  );
+  const newOutline: Outline = { ...currentOutline, frames: newFrames };
+
+  // 2) 重新生成画面 / TTS
+  const newSources = [...currentVideoSource.frames];
+  // 重要：要先清空旧画面，让后续生成逻辑走"新生成"分支
+  newSources[frameIndex0] = {
+    id: targetFrame.id,
+    imagePath: undefined,
+    audioPath: undefined,
+    audioDuration: undefined,
+    htmlCode: undefined,
+  };
+
+  try {
+    await regenerateFrameMedia({
+      projectId,
+      projectType,
+      styleId,
+      outline: newOutline,
+      frame: newFrames[frameIndex0],
+      videoSourceEntry: newSources[frameIndex0],
+    });
+    // 重新读一次最新 videoSource（regenerateFrameMedia 内部会写库）
+    const refreshed = await prisma.project.findUnique({ where: { uuid: projectId } });
+    if (refreshed?.videoSource) {
+      return {
+        outline: newOutline,
+        videoSource: refreshed.videoSource as unknown as VideoSource,
+        message: `已修改并重新生成分镜 #${frameIndex1}《${newFrames[frameIndex0].title}》的画面和旁白。`,
+      };
+    }
+    return {
+      outline: newOutline,
+      videoSource: { frames: newSources },
+      message: `已修改分镜 #${frameIndex1}《${newFrames[frameIndex0].title}》的内容。`,
+    };
+  } catch (err) {
+    console.error('[regenerateFrameMedia] 失败', err);
+    // 即便画面生成失败，也保留已修改的大纲
+    return {
+      outline: newOutline,
+      videoSource: { frames: newSources },
+      message: `已修改分镜内容，但画面/旁白生成失败：${(err as Error).message}`,
+    };
+  }
+}
+
+// =============================================================================
+// 内部：新增分镜
+// =============================================================================
+
+async function handleAddFrame(opts: {
+  projectId: string;
+  projectType: ProjectType;
+  styleId: string | null;
+  currentOutline: Outline | null;
+  currentVideoSource: VideoSource;
+  params: Record<string, unknown>;
+  userHint: string;
+  conversationContext: string;
+}): Promise<{
+  outline?: Outline;
+  videoSource?: VideoSource;
+  message: string;
+}> {
+  const { projectId, projectType, styleId, currentOutline, currentVideoSource, params, userHint, conversationContext } = opts;
+
+  if (!currentOutline) {
+    return { message: '当前项目还没有大纲，请先生成大纲。' };
+  }
+
+  const afterIndex1 = Math.max(0, Number(params.afterIndex) || 0);
+
+  // 1) AI 生成新分镜内容
+  let newContent;
+  try {
+    newContent = await generateNewFrameContent({
+      type: projectType,
+      outline: currentOutline,
+      userHint: userHint,
+      afterIndex: afterIndex1,
+      conversationContext,
+    });
+  } catch (err) {
+    console.error('[generateNewFrameContent] 失败', err);
+    return { message: `AI 生成新分镜内容失败：${(err as Error).message}` };
+  }
+
+  // AI 可能会回填更合适的 afterIndex
+  const finalAfterIndex1 = newContent.afterIndex > 0 ? newContent.afterIndex : afterIndex1;
+
+  // 2) 构造新分镜
+  const newFrame: FrameOutline = {
+    id: crypto.randomUUID(),
+    index: 0, // 会在 insertFrameIntoOutline 中重排
+    title: newContent.title,
+    narration: newContent.narration,
+    imagePrompt: projectType === 'image' ? newContent.imagePrompt : undefined,
+    htmlPrompt: projectType === 'html' ? newContent.htmlPrompt : undefined,
+  };
+
+  // 3) 插入到大纲
+  const { outline: newOutline, insertAt } = insertFrameIntoOutline(currentOutline, newFrame, finalAfterIndex1);
+
+  // 4) 重排 videoSource
+  const realignedVS = realignVideoSource(newOutline, currentVideoSource);
+  // 新分镜位置就是 insertAt，先把该位置清空（无旧画面）
+  realignedVS.frames[insertAt] = { id: newFrame.id };
+
+  // 5) 写库（先把新大纲落库，再生成媒体）
+  await prisma.project.update({
+    where: { uuid: projectId },
+    data: { outline: newOutline as any, videoSource: realignedVS as any },
+  });
+
+  // 6) 生成新分镜的画面 / 旁白
+  try {
+    await regenerateFrameMedia({
+      projectId,
+      projectType,
+      styleId,
+      outline: newOutline,
+      frame: newOutline.frames[insertAt],
+      videoSourceEntry: realignedVS.frames[insertAt],
+    });
+    const refreshed = await prisma.project.findUnique({ where: { uuid: projectId } });
+    const posLabel = insertAt + 1; // 1-based
+    const afterLabel = finalAfterIndex1 > 0 ? `第 ${finalAfterIndex1} 镜之后` : '合适的位置';
+    if (refreshed?.videoSource) {
+      return {
+        outline: newOutline,
+        videoSource: refreshed.videoSource as unknown as VideoSource,
+        message: `已在${afterLabel}插入新分镜 #${posLabel}《${newFrame.title}》，并完成画面和旁白生成。`,
+      };
+    }
+    return {
+      outline: newOutline,
+      videoSource: realignedVS,
+      message: `已插入新分镜 #${posLabel}《${newFrame.title}》。`,
+    };
+  } catch (err) {
+    console.error('[addFrame] media 失败', err);
+    return {
+      outline: newOutline,
+      videoSource: realignedVS,
+      message: `已插入新分镜 #${insertAt + 1}《${newFrame.title}》，但画面/旁白生成失败：${(err as Error).message}`,
+    };
+  }
+}
+
+async function buildConversationContext(projectId: string, recentRounds: number): Promise<string> {
+  const messages = await prisma.message.findMany({
+    where: { projectId },
+    orderBy: { createdAt: 'asc' },
+    select: { role: true, content: true },
+  });
+
+  const normalized = messages
+    .map(message => ({
+      role: message.role as 'user' | 'assistant',
+      content: message.content.trim(),
+    }))
+    .filter(message => message.content);
+
+  if (normalized.length === 0) return '';
+
+  const firstUser = normalized.find(message => message.role === 'user');
+  const rounds: Array<{ user: string; assistants: string[] }> = [];
+  let currentRound: { user: string; assistants: string[] } | null = null;
+
+  for (const message of normalized) {
+    if (message.role === 'user') {
+      if (currentRound) rounds.push(currentRound);
+      currentRound = { user: message.content, assistants: [] };
+      continue;
+    }
+
+    if (!currentRound) {
+      currentRound = { user: '', assistants: [message.content] };
+    } else {
+      currentRound.assistants.push(message.content);
+    }
+  }
+
+  if (currentRound) rounds.push(currentRound);
+
+  const recent = rounds
+    .filter((round, index) => !(index === 0 && firstUser && round.user === firstUser.content))
+    .slice(-recentRounds);
+
+  const parts: string[] = [];
+
+  if (firstUser) {
+    parts.push('【最开始的用户需求】');
+    parts.push(firstUser.content);
+  }
+
+  if (recent.length > 0) {
+    parts.push(`【最近${recent.length}轮对话】`);
+    recent.forEach((round, index) => {
+      parts.push(`第${index + 1}轮`);
+      if (round.user) {
+        parts.push(`用户：${round.user}`);
+      }
+      round.assistants.forEach(reply => {
+        parts.push(`助手：${reply}`);
+      });
+    });
+  }
+
+  return parts.join('\n');
+}
+
+// =============================================================================
+// 内部：单个分镜的画面/HTML + TTS 重新生成
+// =============================================================================
+
+async function regenerateFrameMedia(opts: {
+  projectId: string;
+  projectType: ProjectType;
+  styleId: string | null;
+  outline: Outline;
+  frame: FrameOutline;
+  videoSourceEntry: { id: string; [k: string]: unknown };
+}): Promise<void> {
+  const { projectId, projectType, styleId, outline, frame } = opts;
+
+  // 1) 画面
+  if (projectType === 'image') {
+    const imgResult = await generateAndSaveImage({
+      projectId,
+      frameId: frame.id,
+      prompt: frame.imagePrompt || frame.title,
+    });
+    opts.videoSourceEntry.imagePath = imgResult.url;
+  } else {
+    // ⭐ 关键：HTML 模式必须使用项目选中的视觉风格，而不是默认风格
+    const stylePreset = getStyleById(styleId) || getDefaultStyle();
+    const globalScript = outline.frames.map(f => `[#${f.index}] ${f.title}: ${f.narration}`).join('\n');
+    const prevIdx = outline.frames.findIndex(f => f.id === frame.id) - 1;
+    const previousFrame = prevIdx >= 0 ? outline.frames[prevIdx] : null;
+    // 这里简化：取前一个分镜已生成的 htmlCode（如果有）
+    // 直接通过 outline 索引拿上一镜的 videoSource.htmlCode
+    const previousHtml = previousFrame
+      ? ((await prisma.project.findUnique({ where: { uuid: projectId } }))?.videoSource as any)?.frames?.[prevIdx]?.htmlCode ?? null
+      : null;
+
+    const htmlCode = await generateFrameHtml({
+      globalScript,
+      stylePrompt: stylePreset.prompt,
+      frame,
+      previousHtml: previousHtml || null,
+    });
+    opts.videoSourceEntry.htmlCode = htmlCode;
+  }
+
+  // 2) TTS
+  try {
+    const ttsResult = await generateAndSaveTTS({
+      projectId,
+      frameId: frame.id,
+      text: frame.narration,
+    });
+    opts.videoSourceEntry.audioPath = ttsResult.url;
+    opts.videoSourceEntry.audioDuration = ttsResult.duration;
+  } catch (ttsErr) {
+    console.error('[regenerateFrameMedia TTS] 失败', ttsErr);
+  }
+
+  // 3) 写回 videoSource.frames 对应位置
+  const project = await prisma.project.findUnique({ where: { uuid: projectId } });
+  if (!project) return;
+  const vs = (project.videoSource as unknown as VideoSource) || { frames: [] };
+  const frames = [...vs.frames];
+  const idx = outline.frames.findIndex(f => f.id === frame.id);
+  if (idx >= 0) {
+    frames[idx] = { ...(frames[idx] || { id: frame.id }), ...opts.videoSourceEntry };
+    await prisma.project.update({
+      where: { uuid: projectId },
+      data: { videoSource: { frames } as any },
+    });
+  }
+}

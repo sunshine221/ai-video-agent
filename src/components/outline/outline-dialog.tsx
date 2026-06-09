@@ -10,11 +10,11 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useStudioStore } from '@/stores/studio-store';
+import { HtmlThumb } from '@/components/studio/html-thumb';
 import type { ProjectDetail } from '@/types';
 
 interface OutlineDialogProps {
@@ -29,6 +29,13 @@ export function OutlineDialog({ open, onOpenChange, project, onProjectChange }: 
   const setSelectedFrameId = useStudioStore(s => s.setSelectedFrameId);
   const qc = useQueryClient();
 
+  async function refreshProject() {
+    const res = await fetch(`/api/projects/${project.uuid}`);
+    if (!res.ok) throw new Error('刷新项目失败');
+    const data = await res.json();
+    onProjectChange(data);
+  }
+
   const regenImage = useMutation({
     mutationFn: async (frameId: string) => {
       const res = await fetch(`/api/frames/image`, {
@@ -42,6 +49,7 @@ export function OutlineDialog({ open, onOpenChange, project, onProjectChange }: 
     onSuccess: () => {
       toast.success('画面已重新生成');
       qc.invalidateQueries({ queryKey: ['project', project.uuid] });
+      refreshProject().catch(() => {});
     },
     onError: e => toast.error((e as Error).message),
   });
@@ -59,6 +67,7 @@ export function OutlineDialog({ open, onOpenChange, project, onProjectChange }: 
     onSuccess: () => {
       toast.success('旁白已重新生成');
       qc.invalidateQueries({ queryKey: ['project', project.uuid] });
+      refreshProject().catch(() => {});
     },
     onError: e => toast.error((e as Error).message),
   });
@@ -76,7 +85,7 @@ export function OutlineDialog({ open, onOpenChange, project, onProjectChange }: 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+      <DialogContent className="flex max-h-[85vh] min-h-0 max-w-4xl flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <span>{project.outline.title}</span>
@@ -87,7 +96,7 @@ export function OutlineDialog({ open, onOpenChange, project, onProjectChange }: 
           <DialogDescription>查看每个分镜的画面预览、旁白、提示词；可单独重新生成</DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 -mx-6 px-6">
+        <div className="min-h-0 flex-1 overflow-y-auto px-1">
           <div className="space-y-3 pb-4">
             {frames.map((f, i) => {
               const fs = sources[i];
@@ -101,22 +110,13 @@ export function OutlineDialog({ open, onOpenChange, project, onProjectChange }: 
                       setSelectedFrameId(f.id);
                     }}
                   >
-                    {/* 缩略图：HTML 模式用静态占位避免多 iframe 卡死 */}
+                    {/* 缩略图 */}
                     <div className="h-16 w-24 flex-shrink-0 overflow-hidden rounded-md bg-slate-100">
                       {project.type === 'image' && fs?.imagePath ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={fs.imagePath} alt={f.title} className="h-full w-full object-cover" />
                       ) : project.type === 'html' && fs?.htmlCode ? (
-                        <div
-                          className="h-full w-full"
-                          style={{
-                            background: `linear-gradient(135deg, hsl(${
-                              Array.from(f.id).reduce((a, c) => a + c.charCodeAt(0), 0) % 360
-                            } 60% 88%), hsl(0 0% 96%))`,
-                          }}
-                        >
-                          <Code2 className="m-auto mt-4 block h-5 w-5 text-slate-500" />
-                        </div>
+                        <HtmlThumb htmlCode={fs.htmlCode} scale={0.075} title="完整大纲分镜缩略预览" />
                       ) : (
                         <div className="flex h-full w-full items-center justify-center text-slate-400">
                           {project.type === 'image' ? <ImageIcon className="h-5 w-5" /> : <Code2 className="h-5 w-5" />}
@@ -124,7 +124,6 @@ export function OutlineDialog({ open, onOpenChange, project, onProjectChange }: 
                       )}
                     </div>
 
-                    {/* 信息 */}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-mono">
@@ -135,7 +134,6 @@ export function OutlineDialog({ open, onOpenChange, project, onProjectChange }: 
                       <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">{f.narration}</p>
                     </div>
 
-                    {/* 操作 */}
                     <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
                       <Button
                         size="icon"
@@ -150,7 +148,6 @@ export function OutlineDialog({ open, onOpenChange, project, onProjectChange }: 
                     </div>
                   </div>
 
-                  {/* 展开详情 */}
                   {isExpanded && (
                     <div className="border-t bg-slate-50 p-3">
                       <div className="space-y-3">
@@ -201,7 +198,7 @@ export function OutlineDialog({ open, onOpenChange, project, onProjectChange }: 
               );
             })}
           </div>
-        </ScrollArea>
+        </div>
       </DialogContent>
     </Dialog>
   );

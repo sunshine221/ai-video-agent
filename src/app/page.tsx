@@ -46,6 +46,7 @@ const modes: ModeCard[] = [
 export default function HomePage() {
   const router = useRouter();
   const [loading, setLoading] = useState<ProjectType | null>(null);
+  const [enteringCenter, setEnteringCenter] = useState(false);
 
   async function handleCreate(type: ProjectType) {
     setLoading(type);
@@ -62,6 +63,25 @@ export default function HomePage() {
     } catch (err) {
       toast.error((err as Error).message);
       setLoading(null);
+    }
+  }
+
+  async function handleEnterCenter() {
+    if (enteringCenter || loading !== null) return;
+    setEnteringCenter(true);
+    try {
+      const res = await fetch('/api/projects');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '获取项目列表失败');
+      if (!Array.isArray(data) || data.length === 0) {
+        toast.info('还没有项目，请先选择下方模式开始创作');
+        return;
+      }
+      router.push(`/projects/${data[0].uuid}`);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setEnteringCenter(false);
     }
   }
 
@@ -97,6 +117,25 @@ export default function HomePage() {
             <br />
             选择一种创作模式，几分钟内生成完整视频。
           </p>
+        </div>
+
+        <div className="mt-10 flex justify-center">
+          <Button
+            size="lg"
+            variant="outline"
+            disabled={enteringCenter || loading !== null}
+            onClick={handleEnterCenter}
+            className="min-w-44"
+          >
+            {enteringCenter ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                进入中...
+              </>
+            ) : (
+              '进入创作中心'
+            )}
+          </Button>
         </div>
 
         {/* Mode Cards */}

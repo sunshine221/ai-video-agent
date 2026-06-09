@@ -22,7 +22,12 @@ export function ChatPanel({ project, messages, onMessagesChange, onProjectChange
   const [input, setInput] = useState('');
   const [stylePickerOpen, setStylePickerOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef(messages);
   const qc = useQueryClient();
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   // 滚动到底
   useEffect(() => {
@@ -47,19 +52,60 @@ export function ChatPanel({ project, messages, onMessagesChange, onProjectChange
         project: ProjectDetail;
       }>;
     },
-    onSuccess: data => {
-      onMessagesChange([...messages, data.userMessage, data.assistantMessage]);
-      onProjectChange(data.project);
-      qc.invalidateQueries({ queryKey: ['projects'] });
-      setInput('');
-    },
     onError: e => toast.error((e as Error).message),
   });
 
-  function handleSend() {
+  async function handleSend() {
     const text = input.trim();
     if (!text || sendMut.isPending) return;
-    sendMut.mutate(text);
+
+    const now = new Date().toISOString();
+    const tempUserId = `temp-user-${Date.now()}`;
+    const tempAssistantId = `temp-assistant-${Date.now()}`;
+    const optimisticUser: ChatMessage = {
+      id: tempUserId,
+      projectId: project.uuid,
+      role: 'user',
+      content: text,
+      metadata: { kind: 'text' },
+      createdAt: now,
+    };
+    const optimisticAssistant: ChatMessage = {
+      id: tempAssistantId,
+      projectId: project.uuid,
+      role: 'assistant',
+      content: 'AI 正在思考...',
+      metadata: { kind: 'pending' },
+      createdAt: now,
+    };
+
+    onMessagesChange([...messagesRef.current, optimisticUser, optimisticAssistant]);
+    setInput('');
+
+    try {
+      const data = await sendMut.mutateAsync(text);
+      const nextMessages = messagesRef.current.map(message => {
+        if (message.id === tempUserId) return data.userMessage;
+        if (message.id === tempAssistantId) return data.assistantMessage;
+        return message;
+      });
+      onMessagesChange(nextMessages);
+      onProjectChange(data.project);
+      qc.invalidateQueries({ queryKey: ['projects'] });
+    } catch (e) {
+      const reverted = messagesRef.current.filter(
+        message => message.id !== tempUserId && message.id !== tempAssistantId,
+      );
+      const errorMessage: ChatMessage = {
+        id: `temp-error-${Date.now()}`,
+        projectId: project.uuid,
+        role: 'assistant',
+        content: '',
+        metadata: { kind: 'error', message: (e as Error).message || '请求失败' },
+        createdAt: new Date().toISOString(),
+      };
+      onMessagesChange([...reverted, errorMessage]);
+    }
   }
 
   return (
@@ -76,6 +122,8 @@ export function ChatPanel({ project, messages, onMessagesChange, onProjectChange
               <p className="font-medium">开始创作</p>
               <p className="mt-1 text-xs">输入提示词，例如：</p>
               <p className="mt-1 text-xs italic">"帮我做一个 3 分钟介绍黑洞的视频"</p>
+              <p className="mt-1 text-xs italic">"在第 2 镜后面加一个分镜讲讲爱因斯坦"</p>
+              <p className="mt-1 text-xs italic">"第 3 镜的旁白里加上年份"</p>
             </div>
           ) : (
             messages.map(m => (
@@ -86,12 +134,6 @@ export function ChatPanel({ project, messages, onMessagesChange, onProjectChange
                 onProjectChange={onProjectChange}
               />
             ))
-          )}
-          {sendMut.isPending && (
-            <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              AI 正在思考...
-            </div>
           )}
         </div>
       </ScrollArea>
@@ -136,7 +178,7 @@ export function ChatPanel({ project, messages, onMessagesChange, onProjectChange
           </div>
         </div>
         <p className="mt-1.5 text-[10px] text-muted-foreground">
-          支持的操作：生成大纲 · 新增/删除/重生成分镜
+          支持：生成大纲 · 修改分镜（如"第3镜加一句年份"）· 新增分镜（如"在第2镜后加一个讲爱因斯坦的"）
         </p>
       </div>
 

@@ -1,258 +1,230 @@
 # AI 视频制作智能体
 
-> 一个 B/S 模式的 AI 视频创作平台。从主题一句话，AI 全自动生成脚本、分镜、画面、旁白，产出完整视频。
+一个基于 Next.js 的 AI 视频创作工作台。输入一句主题或一段需求描述，系统会自动完成意图识别、大纲生成、分镜生成、旁白配音、字幕同步和预览导出。
 
-**两种创作模式**：
-- 🖼️ **图片轮播模式** — AI 文生图，多张图片轮播成片
-- 🎬 **HTML 动画模式** — AI 生成网页动画，多段动画合成
+项目当前支持两种创作模式：
 
----
+- `image`：文生图分镜，适合知识讲解、口播轮播类视频
+- `html`：AI 生成 HTML/CSS/JS 动画分镜，适合科技演示、动态可视化、风格化表达
 
-## ✨ 核心功能
+## 界面预览
 
-| 功能 | 描述 |
-| --- | --- |
-| 🎯 智能意图分析 | 自动识别「生成大纲 / 重新生成 / 新增/删除/重生成分镜」等意图 |
-| 📝 视频大纲生成 | 6-30 个分镜，含标题、逐字旁白、画面提示词（image 模式含全局画风） |
-| 🖼️ 分镜画面生成 | image 模式：z-image-turbo 文生图；html 模式：AI 生成 HTML/CSS/JS 动画 |
-| 🎤 旁白语音 | gpt-4o-mini-tts（多音色，中文推荐 nova） |
-| 📺 播放器 | 图片缓慢放大、HTML 动画播放、字幕按字数百分比自动同步、淡入淡出切帧 |
-| 🎨 3 套视觉风格 | 玻璃拟态 / 极简直描 / 数据可视化 |
-| 🔄 单分镜重生成 | 完整大纲弹窗内可独立重生成画面或旁白 |
-| ⏸️ 中断生成 | 长任务可随时中断，已生成的保存 |
-| 🌓 浅色主题 | 干净、清晰、适合长时间创作 |
+### 首页
 
----
+![首页预览](docs/images/homepage.png)
 
-## 🚀 快速启动
+### 创作页
 
-### 1. 准备环境
+![创作页预览](docs/images/creation.png)
 
-- **Node.js** 22+ ✓
-- **MySQL** 8.0+（或用 Docker 启动，见下）
+## 项目作用
 
-### 2. 启动 MySQL（Docker 方式）
+这个项目主要解决“从想法到可播放视频草稿”的自动化问题，适合用来快速搭建 AI 视频生成 Demo、视频工作流原型或内部创作工具。
+
+它内置了这些能力：
+
+- 对话式创作入口，自动判断用户是在“生成大纲”还是“增删改某个分镜”
+- 自动生成视频大纲，包含标题、旁白、分镜提示词
+- 图片模式下自动生成分镜图、旁白音频和字幕
+- HTML 模式下自动生成可播放的网页动画分镜
+- 支持单个分镜重生成，不必整条视频推倒重来
+- 支持长任务中断，已完成内容会保留
+- 本地保存图片、音频等产物
+- 浏览器内预览，并支持 MP4 导出
+
+## 内置三种风格
+
+三种风格仅用于 `html` 动画模式：
+
+- `科技博主（cyber-clean）`
+  深色科技感、青色霓虹、卡片化信息布局，适合测评、拆解、科技分享
+- `黑客风（terminal-matrix）`
+  终端界面、Matrix 绿、ASCII 装饰、扫描线效果，适合技术演示和极客内容
+- `暖色系（warm-story）`
+  奶油米色、暖橘琥珀、衬线标题和大留白，适合人文、生活方式、故事表达
+
+风格配置位于 [src/lib/styles/presets.ts](/Users/xuanyuan/Documents/AI-Program/minimax_test/M3/ai-video-test/src/lib/styles/presets.ts)。
+
+## 技术栈
+
+- `Next.js 14` + `React 18` + `TypeScript`
+- `Prisma` + `MySQL 8`
+- `Tailwind CSS`
+- `OpenAI SDK`（对接 OpenAI 兼容接口）
+- `Vitest`
+
+## 快速开始
+
+### 1. 环境要求
+
+- `Node.js 22+`
+- `MySQL 8+`
+- 可用的 OpenAI 兼容模型网关
+
+如果你本地没有 MySQL，可以直接用仓库里的 Docker 配置：
 
 ```bash
 docker-compose up -d
 ```
 
-或将 `docker-compose.yml` 中的账号密码同步到 `.env` 的 `DATABASE_URL`。
+默认会启动一个名为 `ai-video-mysql` 的 MySQL 8 实例。
 
-### 3. 安装依赖
+### 2. 安装依赖
 
 ```bash
 npm install
 ```
 
-### 4. 配置环境变量
+### 3. 配置环境变量
 
 ```bash
 cp .env.example .env
 ```
 
-编辑 `.env` 填写：
+按需修改 `.env`：
 
 ```env
 DATABASE_URL="mysql://root:password@localhost:3306/ai_video"
 
-# 中转站（推荐接入，便于切模型）
-# 国内：https://uniapi.ai  https://www.packyapi.com  https://poloai.top
-# 国外：https://openrouter.ai
-AI_BASE_URL="https://api.your-relay.com/v1"
+AI_BASE_URL="https://your-openai-compatible-gateway/v1"
 AI_API_KEY="sk-xxx"
 AI_MODEL="gemini-3-flash-preview"
 
-# TTS
 TTS_VOICE="nova"
+TTS_MODEL="qwen3-tts-flash"
 
-# 图片生成（注册地址：https://evolink.ai/z-image-turbo）
-IMAGE_API_BASE_URL="https://api.evolink.ai/v1"
-IMAGE_API_KEY="xxx"
+IMAGE_API_BASE_URL="https://api.evolink.ai"
+IMAGE_API_KEY="your-image-key"
+
+NEXT_PUBLIC_APP_NAME="AI 视频制作智能体"
 ```
 
-### 5. 初始化数据库
+### 4. 初始化数据库
+
+开发环境可以直接推送 schema：
 
 ```bash
-# 推 schema 到 MySQL
 npx prisma db push
+```
 
-# 或使用迁移文件（生产推荐）
+如果你更偏向迁移方式：
+
+```bash
 npx prisma migrate deploy
 ```
 
-如需手建表，参考 `prisma/migrations/0001_init/migration.sql`。
+数据库模型定义见 [prisma/schema.prisma](/Users/xuanyuan/Documents/AI-Program/minimax_test/M3/ai-video-test/prisma/schema.prisma)。
 
-### 6. 启动开发服务器
+### 5. 启动项目
 
 ```bash
 npm run dev
 ```
 
-打开 http://localhost:3000
+浏览器打开 [http://localhost:3000](http://localhost:3000)。
 
----
+## 环境变量说明
 
-## 🛠️ 常用脚本
+| 变量名 | 必填 | 说明 |
+| --- | --- | --- |
+| `DATABASE_URL` | 是 | Prisma 连接 MySQL 的地址 |
+| `AI_BASE_URL` | 是 | OpenAI 兼容接口的基础地址，代码会直接调用聊天与 TTS 接口 |
+| `AI_API_KEY` | 是 | 上述网关对应的 API Key |
+| `AI_MODEL` | 是 | 主文本模型，用于意图分析、大纲生成、HTML 生成等 |
+| `TTS_VOICE` | 否 | TTS 音色，默认 `nova` |
+| `TTS_MODEL` | 否 | TTS 模型名，默认 `qwen3-tts-flash` |
+| `IMAGE_API_BASE_URL` | 图片模式必填 | 图片生成服务地址，当前图片链路按 `z-image-turbo` 适配 |
+| `IMAGE_API_KEY` | 图片模式必填 | 图片生成服务密钥 |
+| `NEXT_PUBLIC_APP_NAME` | 否 | 前端顶部显示的应用名称 |
 
-| 命令 | 作用 |
-| --- | --- |
-| `npm run dev` | 启动开发服务器 |
-| `npm run build` | 生产构建 |
-| `npm start` | 启动生产服务 |
-| `npm test` | 运行单元测试（25 个用例） |
-| `npm run test:watch` | 测试 watch 模式 |
-| `npm run db:push` | 推送 Prisma schema 到数据库 |
-| `npm run db:studio` | 打开 Prisma Studio（可视化数据库） |
-| `npm run db:generate` | 重新生成 Prisma client |
-| `npm run lint` | ESLint 检查 |
+说明：
 
----
+- `AI_BASE_URL` 需要是 OpenAI 兼容协议地址。
+- 图片模式依赖单独的图片接口；如果只体验 HTML 模式，可以暂不配置图片相关变量。
+- `IMAGE_API_BASE_URL` 可以写成 `https://api.evolink.ai`，代码会自动补成 `/v1`。
 
-## 📁 项目结构
+## 使用方式
 
+创作工作台示意如下，左侧管理项目，中间预览视频与分镜，右侧通过对话驱动生成和修改：
+
+![创作工作台](docs/images/creation.png)
+
+### 基本流程
+
+1. 进入首页，选择 `图片轮播模式` 或 `HTML 动画模式`
+2. 创建项目后，在聊天区输入主题、脚本或修改要求
+3. 系统先生成视频大纲
+4. 再逐镜生成图片或 HTML 动画，并同时生成旁白音频
+5. 在预览区试听、查看字幕、切换分镜
+6. 需要时可重生成某一镜，最后导出 MP4
+
+### 推荐输入示例
+
+- `帮我做一个 30 秒的视频，讲清楚什么是 RAG`
+- `做一个科技感强一点的 AI Agent 工作流介绍`
+- `把第 3 镜改成更偏数据可视化，不要人物`
+- `删掉最后一镜，再补一个总结镜头`
+
+## 常用命令
+
+```bash
+npm run dev
+npm run build
+npm start
+npm run lint
+npm test
+npm run test:watch
+npm run db:generate
+npm run db:push
+npm run db:studio
 ```
-ai-video-test/
-├── prisma/
-│   ├── schema.prisma          # Prisma 数据模型
-│   └── migrations/            # SQL 迁移文件
+
+## 项目结构
+
+```text
+.
+├── prisma/                    # Prisma schema 与迁移
 ├── src/
-│   ├── app/                   # Next.js App Router
-│   │   ├── page.tsx           # 首页（两种模式卡片）
-│   │   ├── projects/[id]/     # 创作页（三栏布局）
-│   │   └── api/               # 后端 API 路由
-│   │       ├── projects/      # 项目 CRUD
-│   │       ├── agent/chat/    # Agent 意图分析入口
-│   │       ├── outline/       # 视频大纲生成
-│   │       ├── frames/        # 分镜生成（image + html + abort）
-│   │       ├── tts/           # 旁白生成
-│   │       ├── styles/        # 视觉风格列表
-│   │       └── data/          # 本地静态文件（图片/音频）
-│   ├── components/
-│   │   ├── ui/                # shadcn/ui 基础组件
-│   │   ├── home/              # 首页
-│   │   ├── studio/            # 创作页三栏
-│   │   ├── chat/              # 对话气泡
-│   │   ├── outline/           # 大纲卡片 / 完整大纲弹窗
-│   │   ├── player/            # 播放器、字幕
-│   │   └── style-picker/      # 风格选择弹窗
+│   ├── app/                   # Next.js App Router 与 API 路由
+│   ├── components/            # UI、工作台、播放器、风格选择器
+│   ├── hooks/                 # 生成流程相关 hooks
 │   ├── lib/
-│   │   ├── db.ts              # Prisma client
-│   │   ├── env.ts             # 环境变量校验
-│   │   ├── ai/                # AI 能力封装
-│   │   │   ├── client.ts      # OpenAI 兼容客户端
-│   │   │   ├── intent.ts      # 意图分析
-│   │   │   ├── outline.ts     # 大纲生成
-│   │   │   ├── image.ts       # z-image-turbo 图片生成
-│   │   │   ├── html.ts        # HTML 动画生成
-│   │   │   ├── tts.ts         # gpt-4o-mini-tts
-│   │   │   └── abort-registry.ts
-│   │   ├── prompts/           # 系统提示词
-│   │   ├── styles/presets.ts  # 3 套内置风格
-│   │   └── subtitle.ts        # 字幕切片算法
-│   ├── hooks/                 # React Query hooks
-│   ├── stores/                # Zustand
-│   └── types/                 # 共享 TypeScript 类型
+│   │   ├── ai/                # AI、TTS、图片、HTML 生成封装
+│   │   ├── prompts/           # Prompt 模板
+│   │   ├── styles/            # 内置风格预设
+│   │   ├── subtitle.ts        # 字幕切片
+│   │   └── env.ts             # 环境变量校验
+│   ├── stores/                # Zustand 状态
+│   └── types/                 # 共享类型
 ├── data/
-│   ├── images/<projectId>/    # 分镜图片
-│   └── audio/<projectId>/     # 旁白音频
-├── tests/                     # Vitest 单测
-├── docker-compose.yml         # MySQL 容器
-└── .env.example
+│   ├── audio/                 # 本地保存的旁白音频
+│   └── images/                # 本地保存的分镜图片
+├── tests/                     # 单元测试
+└── docker-compose.yml         # 本地 MySQL
 ```
 
----
+## 运行机制
 
-## 🧠 架构
+- 对话入口：`/api/agent/chat`
+- 大纲生成：`/api/outline`
+- 图片分镜生成：`/api/frames/image`
+- HTML 分镜生成：`/api/frames/html`
+- 风格列表：`/api/styles`
+- 静态资源回放：`/api/data/...`
 
-### 核心流程
+项目会把生成结果写入数据库，同时把图片和音频落到本地 `data/` 目录。HTML 分镜则存入数据库里的 `videoSource` 字段。
 
-```
-用户输入提示词
-  ↓ POST /api/agent/chat
-  ↓
-意图分析 prompt → AI（返回 {action, reason, params}）
-  ↓
-路由到具体能力：
-  - generate_outline / regenerate_outline → /api/outline
-  - 后续：生成分镜 → /api/frames/(image|html) （SSE 流式）
-  ↓
-写入 MySQL + 推送 SSE 进度
-  ↓
-前端 React Query 失效缓存 + 重新拉取
-```
+## 开源使用建议
 
-### 关键设计
+- 不要提交真实 `.env`
+- 建议把 `data/images` 和 `data/audio` 作为运行时产物处理
+- 如果要公开演示，先确认你使用的模型网关、图片接口和语音接口都有可再分发权限
+- 如果打算部署到服务器，优先使用正式的 Prisma migration 流程，而不是仅靠 `db push`
 
-- **可拖拽三栏布局**：`react-resizable-panels`，默认 18:50:32，右侧栏最大 50%。
-- **SSE 流式生成**：图片/HTML 分镜生成时，前端通过 SSE 实时接收进度。
-- **AbortController 中断**：服务端用 Map 注册 AbortController，前端调 `/abort` 端点触发中断。
-- **HTML 沙箱渲染**：iframe `sandbox="allow-scripts"` + `srcdoc`，禁止外部资源。
-- **字幕按字数百分比同步**：切片算法见 `src/lib/subtitle.ts`。
-- **图片缓慢放大**：rAF 驱动 transform: scale(1) → scale(1.1)。
-- **三套风格一致性**：HTML 模式下，每个分镜生成时把上一帧 HTML 作为参考 + 风格 prompt 拼接到 user prompt。
-
-### 数据模型
-
-```prisma
-model Project {
-  uuid        String   @id @default(uuid())
-  title       String
-  type        String   // "image" | "html"
-  styleId     String?  // 视觉风格 id
-  outline     Json?    // 视频大纲
-  videoSource Json?    // 视频源（图片/音频/HTML）
-  createdAt   DateTime
-  updatedAt   DateTime
-  messages    Message[]
-}
-
-model Message {
-  id        String
-  projectId String
-  role      String   // "user" | "assistant"
-  content   String
-  metadata  Json?    // 大纲卡片/分镜卡片/进度等
-  createdAt DateTime
-}
-```
-
----
-
-## 🧪 测试
+## 测试
 
 ```bash
 npm test
 ```
 
-覆盖：
-- 字幕切片算法（7 个用例）
-- 提示词拼接（4 个用例）
-- 风格预设（6 个用例）
-- 工具函数（8 个用例）
-
----
-
-## 📚 模型推荐
-
-| 用途 | 推荐模型 | 说明 |
-| --- | --- | --- |
-| 文本生成（意图/大纲/HTML） | `gemini-3-flash-preview` | 前端能力、价格、吞吐综合最佳 |
-| TTS 语音 | `gpt-4o-mini-tts` | 复用 AI 中转站，音色选 `nova` 中文表现自然 |
-| 图片生成 | `z-image-turbo` | 性价比极高（约 2.6 分/张） |
-
----
-
-## 🛣️ Roadmap
-
-- [ ] 录屏导出视频（MediaRecorder / ffmpeg）
-- [ ] 新增/删除分镜（Agent 路由补全）
-- [ ] 背景音乐自动选择
-- [ ] 用户登录鉴权（多用户）
-- [ ] 项目导出 / 导入
-
----
-
-## 📄 License
-
-MIT
+当前仓库包含字幕、分镜操作、图片逻辑、样式预设等方面的测试。

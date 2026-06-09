@@ -1,7 +1,9 @@
 'use client';
 
-import { Volume2, ImageOff, Code2, Play } from 'lucide-react';
+import { Volume2, ImageOff, Code2, Play, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { HtmlThumb } from './html-thumb';
+import { useStudioStore } from '@/stores/studio-store';
 import type { ProjectDetail } from '@/types';
 
 interface StoryboardStripProps {
@@ -12,6 +14,8 @@ interface StoryboardStripProps {
 }
 
 export function StoryboardStrip({ project, selectedFrameId, onFrameSelect }: StoryboardStripProps) {
+  const generatingFrameId = useStudioStore(s => s.generatingFrameId);
+  const generationPhase = useStudioStore(s => s.generationPhase);
   // ⚠️ 关键：缩略图完全不挂 iframe。AI HTML 可能含无限循环动画，
   // 即使加了 sandbox+看门狗也不够稳。统一用静态占位，主预览区才渲染真实 HTML。
 
@@ -40,6 +44,7 @@ export function StoryboardStrip({ project, selectedFrameId, onFrameSelect }: Sto
           const hasImage = !!fs?.imagePath;
           const hasHtml = !!fs?.htmlCode;
           const hasAudio = !!fs?.audioPath;
+          const isGenerating = generatingFrameId === f.id && generationPhase !== 'done';
 
           return (
             <button
@@ -58,8 +63,19 @@ export function StoryboardStrip({ project, selectedFrameId, onFrameSelect }: Sto
                 {project.type === 'image' && hasImage ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={fs!.imagePath} alt={f.title} className="h-full w-full object-cover" />
+                ) : project.type === 'html' && hasHtml ? (
+                  <HtmlThumb htmlCode={fs!.htmlCode!} scale={0.1} />
                 ) : (
                   <StaticThumb frame={f} type={project.type} generated={hasHtml || hasImage} />
+                )}
+
+                {isGenerating && (
+                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 bg-slate-900/45 text-white backdrop-blur-[1px]">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span className="text-[9px]">
+                      {generationPhase === 'tts' ? '生成旁白中' : '生成画面中'}
+                    </span>
+                  </div>
                 )}
 
                 {/* 序号 */}
@@ -127,10 +143,14 @@ function StaticThumb({
 
   return (
     <div
-      className="flex h-full w-full items-center justify-center"
+      className="relative h-full w-full overflow-hidden"
       style={{ background: bg }}
     >
-      <Play className="h-4 w-4 text-slate-700/40" />
+      <div className="absolute inset-0 bg-gradient-to-b from-white/40 via-white/10 to-black/10" />
+      <div className="absolute bottom-1.5 left-1.5 flex items-center gap-1 rounded-full bg-black/35 px-1.5 py-0.5 text-[9px] text-white">
+        <Play className="h-2.5 w-2.5" />
+        <span>{type === 'html' ? 'HTML' : 'IMAGE'}</span>
+      </div>
     </div>
   );
 }

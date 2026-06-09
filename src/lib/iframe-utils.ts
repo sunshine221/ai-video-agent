@@ -140,3 +140,42 @@ export function sanitizeAiHtml(html: string): string {
   cleaned = cleaned.replace(/<base[^>]*>/gi, '');
   return cleaned;
 }
+
+/**
+ * 为缩略图生成一个无脚本的安全预览壳：
+ * - 固定按 1280x720 设计稿尺寸渲染
+ * - 父容器通过 transform 整体缩放，确保看到完整分镜
+ */
+export function wrapHtmlForThumbnail(innerHtml: string): string {
+  const extracted = extractHeadAndBody(innerHtml);
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1280, initial-scale=1" />
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 1280px;
+    height: 720px;
+    overflow: hidden;
+    background: transparent;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  .ai-thumb-stage {
+    position: relative;
+    width: 1280px;
+    height: 720px;
+    overflow: hidden;
+    transform-origin: 0 0;
+  }
+</style>
+${extracted.head}
+</head>
+<body>
+  <div class="ai-thumb-stage">${extracted.body}</div>
+</body>
+</html>`;
+}

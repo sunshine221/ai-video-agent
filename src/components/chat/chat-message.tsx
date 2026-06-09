@@ -1,7 +1,6 @@
 'use client';
 
-import { useState } from 'react';
-import { User, Bot, ListTree } from 'lucide-react';
+import { User, Bot, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { OutlineCard } from '@/components/outline/outline-card';
 import { Progress } from '@/components/ui/progress';
@@ -55,6 +54,14 @@ export function ChatMessageBubble({ message, project, onProjectChange }: ChatMes
           {message.metadata?.kind === 'error' && (
             <div className="rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1 text-xs text-destructive">
               ⚠️ {message.metadata.message}
+            </div>
+          )}
+
+          {/* 等待态气泡 */}
+          {message.metadata?.kind === 'pending' && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <p className="whitespace-pre-wrap break-words">{message.content}</p>
             </div>
           )}
 

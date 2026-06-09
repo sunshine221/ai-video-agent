@@ -84,7 +84,10 @@ const PreviewBody = forwardRef<HTMLDivElement, PreviewBodyProps>(function Previe
       initRef.current = true;
       return;
     }
-    if (frameSource.id === displayed.id) return;
+    if (frameSource.id === displayed.id) {
+      setDisplayed(frameSource);
+      return;
+    }
 
     // 1) 把当前 displayed 存为 outgoing
     setOutgoing(displayed);
@@ -109,7 +112,7 @@ const PreviewBody = forwardRef<HTMLDivElement, PreviewBodyProps>(function Previe
   return (
     <div
       ref={ref}
-      className="relative h-full overflow-hidden rounded-xl border bg-slate-900 shadow-inner"
+      className="preview-stage relative h-full overflow-hidden rounded-xl bg-slate-900 shadow-inner"
       style={{ background: '#0f172a' }}
     >
       {/* 旧帧 — 淡出中（pointer-events-none 防止拦截点击） */}
@@ -167,7 +170,13 @@ function FrameContent({
       />
     );
   }
-  return <HtmlFrame htmlCode={frameSource.htmlCode} frameId={frameSource.id} />;
+  return (
+    <HtmlFrame
+      htmlCode={frameSource.htmlCode}
+      frameId={frameSource.id}
+      frameDuration={frameSource.audioDuration ?? 3}
+    />
+  );
 }
 
 // ===== ImageFrame：rAF 60fps 缩放 =====
@@ -240,15 +249,25 @@ function ImageFrame({
 /** iframe 内容"设计尺寸"（postMessage 失败时的兜底值） */
 const DEFAULT_DESIGN_SIZE = { w: 1280, h: 720 };
 
-function HtmlFrame({ htmlCode, frameId }: { htmlCode?: string; frameId?: string }) {
+function HtmlFrame({
+  htmlCode,
+  frameId,
+  frameDuration,
+}: {
+  htmlCode?: string;
+  frameId?: string;
+  frameDuration: number;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   /** iframe 内部 HTML 的"设计尺寸"，由 iframe 通过 postMessage 上报 */
   const [designSize, setDesignSize] = useState<{ w: number; h: number }>(DEFAULT_DESIGN_SIZE);
+  const watchdogMs = Math.max(8_000, Math.ceil(frameDuration * 1000) + 1_500);
 
   // ⭐ 监听 iframe 的 postMessage 上报（sandbox 阻止我们直接读 contentDocument）
   useEffect(() => {
     const handler = (e: MessageEvent) => {
+      if (e.source !== iframeRef.current?.contentWindow) return;
       if (e.data && e.data.type === '__ai_video_iframe_size') {
         const w = Number(e.data.w);
         const h = Number(e.data.h);
@@ -260,6 +279,10 @@ function HtmlFrame({ htmlCode, frameId }: { htmlCode?: string; frameId?: string 
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
   }, []);
+
+  useEffect(() => {
+    setDesignSize(DEFAULT_DESIGN_SIZE);
+  }, [frameId, htmlCode]);
 
   // ResizeObserver：容器尺寸变化时重新计算 scale + 显式 left/top 居中
   useEffect(() => {
@@ -274,8 +297,8 @@ function HtmlFrame({ htmlCode, frameId }: { htmlCode?: string; frameId?: string 
 
       const baseW = designSize.w;
       const baseH = designSize.h;
-      // ⭐ cover 模式：max 让缩放后的元素至少覆盖一边，溢出被 overflow:hidden 裁剪
-      const scale = Math.max(cw / baseW, ch / baseH);
+      // ⭐ contain 模式：完整展示整个 HTML 画面，避免边缘被裁切
+      const scale = Math.min(cw / baseW, ch / baseH);
       const scaledW = baseW * scale;
       const scaledH = baseH * scale;
       // ⭐ 关键：transform-origin: 0 0 + left/top 显式居中
@@ -292,6 +315,11 @@ function HtmlFrame({ htmlCode, frameId }: { htmlCode?: string; frameId?: string 
     return () => observer.disconnect();
   }, [designSize]);
 
+  const safeHtml = useMemo(
+    () => wrapHtmlWithWatchdog(sanitizeAiHtml(htmlCode || ''), watchdogMs),
+    [htmlCode, watchdogMs],
+  );
+
   if (!htmlCode) {
     return (
       <div className="flex h-full items-center justify-center text-slate-400">
@@ -302,8 +330,6 @@ function HtmlFrame({ htmlCode, frameId }: { htmlCode?: string; frameId?: string 
       </div>
     );
   }
-
-  const safeHtml = useMemo(() => wrapHtmlWithWatchdog(sanitizeAiHtml(htmlCode)), [htmlCode]);
   return (
     <div ref={containerRef} className="html-frame-container">
       <iframe
@@ -314,7 +340,7 @@ function HtmlFrame({ htmlCode, frameId }: { htmlCode?: string; frameId?: string 
         sandbox="allow-scripts"
         loading="lazy"
         referrerPolicy="no-referrer"
-        className="block bg-white"
+        className="block bg-transparent"
         style={{
           position: 'absolute',
           top: 0,

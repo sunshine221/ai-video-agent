@@ -78,6 +78,7 @@ export interface ChatMessage {
 
 export type MessageMetadata =
   | { kind: 'text' }
+  | { kind: 'pending' }
   | { kind: 'outline'; outline: Outline }
   | { kind: 'frame_progress'; current: number; total: number; frameId?: string }
   | { kind: 'error'; message: string };

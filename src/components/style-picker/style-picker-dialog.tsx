@@ -160,7 +160,7 @@ function StylePreviewDialog({
 }) {
   return (
     <Dialog open={!!style} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-6xl max-h-[92vh] p-0 overflow-hidden">
+      <DialogContent hideClose className="max-w-6xl max-h-[92vh] p-0 overflow-hidden">
         {style && (
           <div className="flex flex-col">
             {/* 顶部信息条 */}

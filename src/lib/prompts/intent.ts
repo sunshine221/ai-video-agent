@@ -30,16 +30,20 @@ export const INTENT_SYSTEM_PROMPT = `你是一个视频创作智能体的"意图
   "action": "generate_outline" | "regenerate_outline" | "add_frame" | "delete_frame" | "regenerate_frame" | "unknown",
   "reason": "你的判断理由（中文一句话）",
   "params": {
-    // 根据 action 不同可携带不同参数
     // add_frame: { "afterIndex": 3, "hint": "讲讲量子力学" }
+    //   afterIndex: 在第 N 镜之后插入（1-based）。0 表示用户没指定具体位置，由生成阶段 AI 决定。
+    //   hint: 用户对新增分镜的需求描述（可以包括主题/内容/时长倾向等），若没明确需求可填空字符串。
     // delete_frame: { "frameIndex": 2 }
-    // regenerate_frame: { "frameIndex": 5 }
+    // regenerate_frame: { "frameIndex": 5, "modification": "用户想要的修改方向" }
+    //   modification: 用户对分镜的具体修改要求（如"换成傍晚色调"、"旁白里加上年份"）。
+    //   如果用户没明确修改要求（只是说"重新生成"），可填空字符串。
   }
 }
 
 ## 注意事项
 - 如果项目还没有大纲，而用户说"重新生成"，按 regenerate_outline 处理
 - 如果指令不明确（如"再来一个"），归为 unknown
+- frameIndex / afterIndex 都是 **1-based**（用户看到的编号）
 - 必须输出严格 JSON，不要包含任何 JSON 之外的文字
 `;
 
