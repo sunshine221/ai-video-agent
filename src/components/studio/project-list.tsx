@@ -30,12 +30,12 @@ export function ProjectList() {
       const res = await fetch(`/api/projects/${uuid}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('删除失败');
     },
-    onSuccess: () => {
+    onSuccess: (_data, deletedUuid) => {
       toast.success('项目已删除');
       qc.invalidateQueries({ queryKey: ['projects'] });
-      // 删的是当前打开的项目则跳回首页
-      if (params.id) {
-        const remaining = projects.filter(p => p.uuid !== params.id);
+      // 仅当删除的是当前打开的项目时才跳转
+      if (params.id && params.id === deletedUuid) {
+        const remaining = projects.filter(p => p.uuid !== deletedUuid);
         if (remaining.length) router.push(`/projects/${remaining[0].uuid}`);
         else router.push('/');
       }

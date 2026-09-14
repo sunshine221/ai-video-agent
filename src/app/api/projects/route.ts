@@ -25,7 +25,6 @@ export async function POST(req: NextRequest) {
         title,
         type,
         outline: undefined,
-        videoSource: undefined,
       },
     });
 

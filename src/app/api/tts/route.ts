@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { generateAndSaveTTS } from '@/lib/ai/tts';
-import type { Outline, VideoSource } from '@/types';
+import { upsertFrame } from '@/lib/frames';
+import type { Outline } from '@/types';
 
 const schema = z.object({
   projectId: z.string().uuid(),
@@ -26,21 +27,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '项目或大纲不存在' }, { status: 404 });
     }
     const outline = project.outline as unknown as Outline;
-    const videoSource = (project.videoSource as unknown as VideoSource) || { frames: [] };
     const frame = outline.frames.find(f => f.id === frameId);
     if (!frame) return NextResponse.json({ error: '分镜不存在' }, { status: 404 });
     const idx = outline.frames.findIndex(f => f.id === frameId);
 
     const tts = await generateAndSaveTTS({ projectId, frameId, text: frame.narration });
-    const newSources = [...videoSource.frames];
-    newSources[idx] = {
-      ...(newSources[idx] || { id: frameId }),
+    await upsertFrame(projectId, frameId, idx, {
       audioPath: tts.url,
       audioDuration: tts.duration,
-    };
-    await prisma.project.update({
-      where: { uuid: projectId },
-      data: { videoSource: { frames: newSources } as any },
     });
 
     return NextResponse.json({ audioPath: tts.url, audioDuration: tts.duration });

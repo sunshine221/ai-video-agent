@@ -14,6 +14,9 @@ export const FRAME_HTML_SYSTEM = `你是一位网页动画视频设计工程师�
 - HTML 文档必须是完整可独立运行的（含 <!DOCTYPE html>）
 - 用 HTML + CSS + JS（内联）实现动画；可用 SVG、Canvas
 - 动画时长默认 3-8 秒，与旁白大致匹配
+- ⭐ 关键内容（标题/正文/主体图形）必须在开场 1.5 秒内出现或开始出现，让观众第一时间看到重点
+- ⭐ 任何单个元素的入场动画 delay 不得超过 2 秒；严禁出现 5 秒以上才淡入的关键文字/主体
+- ⭐ 所有关键文字与主体图形在动画结束时应处于"可见、静止"状态，不得停在透明/未入场状态
 - 文字要大（标题 ≥ 48px，正文 ≥ 24px），主色对比强
 - 适配视频画面（16:9，宽 1280px，高 720px）
 - 不要使用任何外部 CDN 或外部资源（除 inline）
@@ -38,9 +41,12 @@ export async function generateFrameHtml(opts: {
     system: FRAME_HTML_SYSTEM,
     user: userPrompt,
     temperature: 0.8,
-    maxRetries: 1,
+    maxRetries: 2,
+    maxTokens: 16000, // HTML 动画通常上万字符，避免输出被截断
   });
-  return sanitizeHtml(res.html || '');
+  const html = sanitizeHtml(res.html || '');
+  if (!html.trim()) throw new Error('生成的 HTML 为空');
+  return html;
 }
 
 /**

@@ -3,15 +3,14 @@ import { join } from 'path';
 import { env } from '@/lib/env';
 
 /**
- * z-image-turbo 图片生成（evolink.ai）
- * 文档：https://evolink.ai/z-image-turbo
+ * 图片生成（多 provider）
  *
- * 两阶段：
- *  1. POST /v1/images/generations 提交任务，返回 task_id
- *  2. GET /v1/tasks/{task_id} 轮询，completed 时返回 image_url，下载到本地
+ * 通过 env.IMAGE_PROVIDER 切换厂商，新增厂商只需实现一个 provider 函数并在
+ * generateAndSaveImage 的 switch 中注册，业务调用方无需改动。
  *
- * ⚠️ 注意：请求体中不能传 `n` 字段（z-image-turbo 不支持多张）
- * ⚠️ 注意：size 字段用比例（"16:9"）或像素（"1024x768"），范围 376-1536
+ * 已支持：
+ *  - 'evolink'   evolink.ai（两阶段任务：提交 -> 轮询 /tasks）
+ *  - 'dashscope' 阿里云百炼原生 multimodal-generation 同步生图（z-image-turbo）
  */
 
 const POLL_INTERVAL_MS = 2000;
@@ -84,6 +83,8 @@ function extractImageUrl(resp: PollTaskResponse): string | undefined {
 /**
  * 生成图片并保存到 data/images/<projectId>/<frameId>.png
  * @returns 相对 URL 路径：/api/data/images/<projectId>/<frameId>.png
+ *
+ * 按 env.IMAGE_PROVIDER 分发到对应 provider。新增厂商在此注册即可。
  */
 export async function generateAndSaveImage(opts: {
   projectId: string;
@@ -92,15 +93,34 @@ export async function generateAndSaveImage(opts: {
   abortSignal?: AbortSignal;
 }): Promise<{ url: string; durationMs: number }> {
   const { projectId, frameId, prompt, abortSignal } = opts;
+  const start = Date.now();
 
+  let imageUrl: string;
+  switch ((env.IMAGE_PROVIDER || 'evolink').toLowerCase()) {
+    case 'dashscope':
+      imageUrl = await generateImageDashScope(prompt, abortSignal);
+      break;
+    case 'evolink':
+    default:
+      imageUrl = await generateImageEvolink(prompt, abortSignal);
+      break;
+  }
+
+  const url = await downloadImage({ imageUrl, projectId, frameId, abortSignal });
+  return { url, durationMs: Date.now() - start };
+}
+
+/**
+ * evolink.ai z-image-turbo
+ * 两阶段：POST /images/generations 提交 -> 轮询 GET /tasks/{id}
+ * ⚠️ 请求体不能传 n（不支持多张）；size 用比例或像素（376-1536）
+ */
+async function generateImageEvolink(prompt: string, abortSignal?: AbortSignal): Promise<string> {
   if (!env.IMAGE_API_BASE_URL || !env.IMAGE_API_KEY) {
     throw new Error('图片生成未配置：缺少 IMAGE_API_BASE_URL / IMAGE_API_KEY');
   }
-
-  const start = Date.now();
   const baseUrl = normalizeBase(env.IMAGE_API_BASE_URL);
 
-  // 阶段 1：创建任务
   const createRes = await fetch(`${baseUrl}/images/generations`, {
     method: 'POST',
     headers: {
@@ -108,9 +128,9 @@ export async function generateAndSaveImage(opts: {
       authorization: `Bearer ${env.IMAGE_API_KEY}`,
     },
     body: JSON.stringify({
-      model: 'z-image-turbo',
+      model: env.IMAGE_MODEL,
       prompt,
-      size: '16:9',
+      size: env.IMAGE_SIZE,
     }),
     signal: abortSignal,
   });
@@ -124,9 +144,7 @@ export async function generateAndSaveImage(opts: {
     throw new Error(`图片任务创建失败：未返回 id。响应：${JSON.stringify(created).slice(0, 500)}`);
   }
 
-  // 阶段 2：轮询
   const deadline = Date.now() + POLL_TIMEOUT_MS;
-  let imageUrl: string | undefined;
   while (Date.now() < deadline) {
     if (abortSignal?.aborted) throw new Error('已中断');
     await sleep(POLL_INTERVAL_MS);
@@ -140,21 +158,84 @@ export async function generateAndSaveImage(opts: {
     }
     const status = (await pollRes.json()) as PollTaskResponse;
     if (status.status === 'succeeded' || status.status === 'completed' || status.status === 'success') {
-      imageUrl = extractImageUrl(status);
-      if (imageUrl) break;
-      // 状态是成功但没拿到 url，再等一轮
+      const url = extractImageUrl(status);
+      if (url) return url;
       continue;
     }
     if (status.status === 'failed') {
       throw new Error(`图片生成失败: ${status.error || JSON.stringify(status).slice(0, 300)}`);
     }
-    // pending / processing 继续
   }
-  if (!imageUrl) {
-    throw new Error(`图片生成超时或响应中未找到图片 URL`);
-  }
+  throw new Error('图片生成超时或响应中未找到图片 URL');
+}
 
-  // 阶段 3：下载到本地
+/**
+ * 阿里云百炼原生 multimodal-generation 同步生图（z-image-turbo）
+ * POST /api/v1/services/aigc/multimodal-generation/generation
+ * 请求体用多模态 messages 格式；同步返回，图片在 output.choices[0].message.content[0].image
+ *
+ * size 需用像素格式（如 "1280*720"），不接受 "16:9" 比例；
+ * 若配了比例，这里映射为常用像素尺寸。
+ */
+async function generateImageDashScope(prompt: string, abortSignal?: AbortSignal): Promise<string> {
+  const rawBase = env.IMAGE_API_BASE_URL || env.AI_BASE_URL;
+  const apiKey = env.IMAGE_API_KEY || env.AI_API_KEY;
+  if (!rawBase || !apiKey) {
+    throw new Error('图片生成未配置：缺少 IMAGE_API_BASE_URL(或 AI_BASE_URL) / IMAGE_API_KEY(或 AI_API_KEY)');
+  }
+  // 兼容用户填 compatible-mode 端点：原生多模态走 /api/v1，需去掉 /compatible-mode/v1
+  const root = rawBase.replace(/\/+$/, '').replace(/\/compatible-mode\/v1$/, '');
+  const url = `${root}/api/v1/services/aigc/multimodal-generation/generation`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: env.IMAGE_MODEL,
+      input: { messages: [{ role: 'user', content: [{ text: prompt }] }] },
+      parameters: { size: toDashScopeSize(env.IMAGE_SIZE), prompt_extend: false },
+    }),
+    signal: abortSignal,
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`图片生成失败 ${res.status}: ${txt.slice(0, 500)}`);
+  }
+  const data = (await res.json()) as {
+    output?: { choices?: Array<{ message?: { content?: Array<{ image?: string }> } }> };
+    message?: string;
+  };
+  const imageUrl = data.output?.choices?.[0]?.message?.content?.find(c => c.image)?.image;
+  if (!imageUrl) {
+    throw new Error(`图片生成成功但未找到图片 URL：${JSON.stringify(data).slice(0, 300)}`);
+  }
+  return imageUrl;
+}
+
+/** 把宽高比映射为百炼像素尺寸；已是像素格式则原样返回 */
+function toDashScopeSize(size: string): string {
+  if (/^\d+\*\d+$/.test(size)) return size;
+  const map: Record<string, string> = {
+    '16:9': '1280*720',
+    '9:16': '720*1280',
+    '4:3': '1024*768',
+    '3:4': '768*1024',
+    '1:1': '1024*1024',
+  };
+  return map[size] || '1280*720';
+}
+
+/** 下载远程图片并保存到本地，返回可访问的相对 URL */
+async function downloadImage(args: {
+  imageUrl: string;
+  projectId: string;
+  frameId: string;
+  abortSignal?: AbortSignal;
+}): Promise<string> {
+  const { imageUrl, projectId, frameId, abortSignal } = args;
   const imgRes = await fetch(imageUrl, { signal: abortSignal });
   if (!imgRes.ok) throw new Error(`图片下载失败 ${imgRes.status}`);
   const buf = Buffer.from(await imgRes.arrayBuffer());
@@ -162,9 +243,5 @@ export async function generateAndSaveImage(opts: {
   await mkdir(dir, { recursive: true });
   const filePath = join(dir, `${frameId}.png`);
   await writeFile(filePath, buf);
-
-  return {
-    url: `/api/data/images/${projectId}/${frameId}.png`,
-    durationMs: Date.now() - start,
-  };
+  return `/api/data/images/${projectId}/${frameId}.png`;
 }

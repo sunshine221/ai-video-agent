@@ -10,19 +10,52 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String // bcrypt 哈希后的密码
+  name         String? // 显示名，可空
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  projects     Project[]
+
+  @@map("user")
+}
+
 model Project {
-  uuid        String    @id @default(uuid())
-  title       String
-  type        String // "image" | "html"
-  styleId     String? // HTML 模式选中的视觉风格 id
-  outline     Json? // 视频大纲：{title, totalDuration, globalStyle?, frames: [...]}
-  videoSource Json? // 视频源：{frames: [{id, imagePath?, audioPath?, audioDuration?, htmlCode?}]}
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  messages    Message[]
+  uuid      String    @id @default(uuid())
+  title     String
+  type      String // "image" | "html"
+  styleId   String? // HTML 模式选中的视觉风格 id
+  outline   Json? // 视频大纲：{title, totalDuration, globalStyle?, frames: [...]}
+  userId    String? // 归属用户；旧项目可能为空
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+  frames    Frame[]
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([createdAt])
+  @@index([userId])
   @@map("project")
+}
+
+model Frame {
+  id            String   @id @default(uuid())
+  projectId     String
+  frameId       String // 对应 outline.frames[i].id
+  orderIndex    Int // 与 outline 顺序对齐（0-based）
+  htmlCode      String?  @db.LongText // html 模式生成的完整 HTML
+  imagePath     String? // image 模式：/api/data/images/<projectId>/<frameId>.png
+  audioPath     String? // /api/data/audio/<projectId>/<frameId>.mp3
+  audioDuration Float? // 秒
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  project       Project  @relation(fields: [projectId], references: [uuid], onDelete: Cascade)
+
+  @@unique([projectId, frameId])
+  @@index([projectId, orderIndex])
+  @@map("frame")
 }
 
 model Message {

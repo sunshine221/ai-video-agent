@@ -3,19 +3,21 @@ import { join } from 'path';
 import { env } from '@/lib/env';
 
 /**
- * TTS 语音生成。
+ * TTS 语音生成（多 provider）
  *
- * 关键：用原生 fetch + 多 Accept 头兼容各种中转站。
- *  - OpenAI 官方要求 Accept: audio/mpeg
- *  - 部分中转站（如 qwen3-tts-flash）严格只接受 application/json 这种标准类型
- *  - 用 application/json 优先 + audio/mpeg + 通配，三种 header 一起发
+ * 通过 env.TTS_PROVIDER 切换接口风格，新增厂商只需实现一个 provider 函数并在
+ * generateAndSaveTTS 的 switch 中注册，业务调用方无需改动。
  *
- * 实际响应可能是 mp3 或 wav（看 content-type 或文件头 magic bytes），
- * 按实际格式存为对应扩展名（WAV→.wav，MP3→.mp3），浏览器 audio 元素自动识别。
+ * 已支持：
+ *  - 'openai'    OpenAI 兼容 /audio/speech（如中转站的 qwen3-tts-flash、gpt-4o-mini-tts）
+ *  - 'dashscope' 阿里云百炼原生 multimodal-generation（qwen3-tts-flash、qwen-audio-3.0-tts-plus）
  *
- * 支持的模型（取决于中转站）：
- * - gpt-4o-mini-tts  (OpenAI 官方 TTS，音色: alloy/ash/ballad/coral/echo/sage/shimmer/verse/marin/cedar/nova)
- * - qwen3-tts-flash   (通义千问 TTS，音色: Cherry/Serena/Ethan 等中文音色)
+ * 音色（voice）取决于模型：
+ *  - gpt-4o-mini-tts       alloy/ash/ballad/coral/echo/sage/shimmer/verse/nova ...
+ *  - qwen3-tts-flash       Cherry/Serena/Ethan 等中文音色
+ *  - qwen-audio-3.0-tts-plus  longanhuan_v3.6 等
+ *
+ * 实际响应可能是 mp3 或 wav，按文件头 magic bytes 存为对应扩展名。
  */
 export async function generateAndSaveTTS(opts: {
   projectId: string;
@@ -31,85 +33,138 @@ export async function generateAndSaveTTS(opts: {
     text,
     voice = env.TTS_VOICE,
     abortSignal,
-    model = process.env.TTS_MODEL || 'qwen3-tts-flash',
+    model = env.TTS_MODEL,
   } = opts;
   if (!text?.trim()) throw new Error('TTS 文本为空');
-  if (!env.AI_BASE_URL) throw new Error('AI_BASE_URL 未配置');
-  if (!env.AI_API_KEY) throw new Error('AI_API_KEY 未配置');
 
-  const baseUrl = env.AI_BASE_URL.replace(/\/+$/, '');
+  const baseUrl = env.TTS_BASE_URL;
+  const apiKey = env.TTS_API_KEY;
+  if (!baseUrl) throw new Error('TTS_BASE_URL（或 AI_BASE_URL）未配置');
+  if (!apiKey) throw new Error('TTS_API_KEY（或 AI_API_KEY）未配置');
 
-  // 兼容两种中转站的多 Accept 头
-  const response = await fetch(`${baseUrl}/audio/speech`, {
+  let buf: Buffer;
+  switch ((env.TTS_PROVIDER || 'openai').toLowerCase()) {
+    case 'dashscope':
+      buf = await ttsDashScope({ baseUrl, apiKey, model, voice, text, abortSignal });
+      break;
+    case 'openai':
+    default:
+      buf = await ttsOpenAI({ baseUrl, apiKey, model, voice, text, abortSignal });
+      break;
+  }
+
+  if (buf.length === 0) throw new Error('TTS 返回内容为空');
+  return saveAndReturn({ buf, projectId, frameId, text, format: detectFormat(buf) });
+}
+
+/**
+ * OpenAI 兼容 TTS：POST {base}/audio/speech
+ * 用多 Accept 头兼容各种中转站；返回可能是二进制音频，也可能是含 base64/url 的 JSON。
+ */
+async function ttsOpenAI(args: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  voice: string;
+  text: string;
+  abortSignal?: AbortSignal;
+}): Promise<Buffer> {
+  const { baseUrl, apiKey, model, voice, text, abortSignal } = args;
+  const base = baseUrl.replace(/\/+$/, '');
+
+  const response = await fetch(`${base}/audio/speech`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      authorization: `Bearer ${env.AI_API_KEY}`,
+      authorization: `Bearer ${apiKey}`,
       accept: 'application/json, audio/mpeg;q=0.9, */*;q=0.5',
     },
-    body: JSON.stringify({
-      model,
-      voice,
-      input: text,
-      response_format: 'mp3',
-    }),
+    body: JSON.stringify({ model, voice, input: text, response_format: 'mp3' }),
     signal: abortSignal,
   });
-
   if (!response.ok) {
     const txt = await response.text();
     throw new Error(`TTS 请求失败 ${response.status}: ${txt.slice(0, 500)}`);
   }
 
-  // 检查返回内容
   const contentType = response.headers.get('content-type') || '';
-
-  // 1) 如果看起来是 JSON 且 body 长度小，可能是错误 JSON
   if (contentType.startsWith('application/json')) {
     const txt = await response.text();
-    // 试着解析为 JSON，看是不是错误
     try {
       const json = JSON.parse(txt);
-      // 真正的 JSON 错误
       if (json.error || json.code) {
         throw new Error(`TTS 错误: ${json.error?.message || json.message || JSON.stringify(json).slice(0, 300)}`);
       }
-      // JSON 里可能含 base64 音频
-      if (json.audio || json.data || json.url) {
-        const b64 = json.audio || json.data;
-        if (typeof b64 === 'string') {
-          const buf = Buffer.from(b64, 'base64');
-          if (buf.length > 0) {
-            return saveAndReturn({ buf, projectId, frameId, text, format: detectFormat(buf) });
-          }
-        }
-        if (typeof json.url === 'string') {
-          // 远程 URL — 下载
-          const audioRes = await fetch(json.url, { signal: abortSignal });
-          if (!audioRes.ok) throw new Error(`下载 TTS 音频失败 ${audioRes.status}`);
-          const buf = Buffer.from(await audioRes.arrayBuffer());
-          return saveAndReturn({ buf, projectId, frameId, text, format: detectFormat(buf) });
-        }
+      const b64 = json.audio || json.data;
+      if (typeof b64 === 'string') {
+        const buf = Buffer.from(b64, 'base64');
+        if (buf.length > 0) return buf;
+      }
+      if (typeof json.url === 'string') {
+        return downloadAudio(json.url, abortSignal);
       }
     } catch (e) {
       if (e instanceof Error && e.message.startsWith('TTS 错误')) throw e;
-      // 不是 JSON，吞掉错误走二进制路径
+      // 不是 JSON，走二进制兜底
     }
-    // 不是 JSON，但 content-type 说是 JSON — 异常情况
     if (txt.length < 1000) {
       throw new Error(`TTS 返回异常 (${contentType}): ${txt.slice(0, 300)}`);
     }
-    // 当二进制处理
-    const buf = Buffer.from(txt, 'binary');
-    return saveAndReturn({ buf, projectId, frameId, text, format: detectFormat(buf) });
+    return Buffer.from(txt, 'binary');
   }
 
-  // 2) 正常情况：直接是二进制音频
-  const buf = Buffer.from(await response.arrayBuffer());
-  if (buf.length === 0) {
-    throw new Error('TTS 返回内容为空');
+  return Buffer.from(await response.arrayBuffer());
+}
+
+/**
+ * 阿里云百炼原生 TTS：POST {root}/api/v1/services/aigc/multimodal-generation/generation
+ * 请求体 { model, input:{ text, voice } }；返回 JSON，音频在 output.audio.url，需再下载。
+ */
+async function ttsDashScope(args: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  voice: string;
+  text: string;
+  abortSignal?: AbortSignal;
+}): Promise<Buffer> {
+  const { baseUrl, apiKey, model, voice, text, abortSignal } = args;
+  // 兼容用户填 compatible-mode 端点：原生多模态走 /api/v1，需去掉 /compatible-mode/v1
+  const root = baseUrl.replace(/\/+$/, '').replace(/\/compatible-mode\/v1$/, '');
+  const url = `${root}/api/v1/services/aigc/multimodal-generation/generation`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({ model, input: { text, voice } }),
+    signal: abortSignal,
+  });
+  if (!response.ok) {
+    const txt = await response.text();
+    throw new Error(`TTS 请求失败 ${response.status}: ${txt.slice(0, 500)}`);
   }
-  return saveAndReturn({ buf, projectId, frameId, text, format: detectFormat(buf) });
+  const data = (await response.json()) as {
+    output?: { audio?: { url?: string; data?: string } };
+    message?: string;
+  };
+  const audioUrl = data.output?.audio?.url;
+  if (audioUrl) return downloadAudio(audioUrl, abortSignal);
+  const b64 = data.output?.audio?.data;
+  if (b64) {
+    const buf = Buffer.from(b64, 'base64');
+    if (buf.length > 0) return buf;
+  }
+  throw new Error(`TTS 返回未找到音频：${JSON.stringify(data).slice(0, 300)}`);
+}
+
+/** 下载远程音频为 Buffer */
+async function downloadAudio(url: string, abortSignal?: AbortSignal): Promise<Buffer> {
+  const res = await fetch(url, { signal: abortSignal });
+  if (!res.ok) throw new Error(`下载 TTS 音频失败 ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
 }
 
 /** 通过 magic bytes 检测音频格式 */

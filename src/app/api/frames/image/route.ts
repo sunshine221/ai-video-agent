@@ -4,7 +4,8 @@ import { prisma } from '@/lib/db';
 import { generateAndSaveImage } from '@/lib/ai/image';
 import { generateAndSaveTTS } from '@/lib/ai/tts';
 import { getOrCreate, clear } from '@/lib/ai/abort-registry';
-import type { Outline, VideoSource } from '@/types';
+import { getVideoSource, upsertFrame } from '@/lib/frames';
+import type { Outline } from '@/types';
 
 const schema = z.object({
   projectId: z.string().uuid(),
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest) {
     });
   }
   const outline = project.outline as unknown as Outline;
-  const videoSource = (project.videoSource as unknown as VideoSource) || { frames: [] };
+  const videoSource = await getVideoSource(projectId, outline);
 
   // 确定要生成哪些帧
   const targetFrames = frameIds?.length
@@ -103,16 +104,17 @@ export async function POST(req: NextRequest) {
             console.error('[TTS] 失败', ttsErr);
           }
 
-          // 3) 写库
+          // 3) 写库（仅 upsert 当前分镜这一行）
           newSources[idx] = {
             id: frame.id,
             imagePath: imgResult.url,
             audioPath: audioUrl,
             audioDuration,
           };
-          await prisma.project.update({
-            where: { uuid: projectId },
-            data: { videoSource: { frames: newSources } as any },
+          await upsertFrame(projectId, frame.id, idx, {
+            imagePath: imgResult.url,
+            audioPath: audioUrl ?? null,
+            audioDuration: audioDuration ?? null,
           });
 
           completed++;

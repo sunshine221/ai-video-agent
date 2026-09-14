@@ -7,12 +7,18 @@ import {
   modifyFrameContent,
   generateNewFrameContent,
   insertFrameIntoOutline,
-  realignVideoSource,
 } from '@/lib/ai/frame-ops';
 import { generateAndSaveImage } from '@/lib/ai/image';
 import { generateFrameHtml } from '@/lib/ai/html';
 import { generateAndSaveTTS } from '@/lib/ai/tts';
 import { getStyleById, getDefaultStyle } from '@/lib/styles/presets';
+import {
+  getVideoSource,
+  syncFramesToOutline,
+  resetFrameMedia,
+  upsertFrame,
+  getFrameHtml,
+} from '@/lib/frames';
 import type {
   IntentResult,
   ProjectDetail,
@@ -66,7 +72,9 @@ export async function POST(req: NextRequest) {
     let intent: IntentResult;
     let assistantContent = '';
     let assistantMetadata: any = { kind: 'text' };
-    let projectUpdate: Partial<{ title: string; outline: Outline; videoSource: VideoSource }> = {};
+    let projectUpdate: Partial<{ title: string; outline: Outline }> = {};
+    // 大纲结构变化时，需要在 project 更新后同步 frame 表（删除多余行、对齐顺序）
+    let outlineToSync: Outline | null = null;
     const conversationContext = await buildConversationContext(projectId, RECENT_HISTORY_ROUNDS);
 
     try {
@@ -90,7 +98,8 @@ export async function POST(req: NextRequest) {
         if (intent.action === 'generate_outline' && !project.outline) {
           projectUpdate.title = outline.title;
         }
-        projectUpdate.videoSource = { frames: outline.frames.map(f => ({ id: f.id })) };
+        // 大纲重建：清掉旧分镜产物、重新对齐（新大纲的帧尚无产物）
+        outlineToSync = outline;
         assistantContent = `已为您生成大纲《${outline.title}》，共 ${outline.frames.length} 个分镜。`;
         assistantMetadata = { kind: 'outline', outline };
         break;
@@ -102,12 +111,10 @@ export async function POST(req: NextRequest) {
           projectType: project.type as ProjectType,
           styleId: project.styleId,
           currentOutline: (project.outline as unknown as Outline) ?? null,
-          currentVideoSource: (project.videoSource as unknown as VideoSource) ?? { frames: [] },
           params: intent.params,
           conversationContext,
         });
         if (result.outline) projectUpdate.outline = result.outline;
-        if (result.videoSource) projectUpdate.videoSource = result.videoSource;
         assistantContent = result.message;
         break;
       }
@@ -118,13 +125,11 @@ export async function POST(req: NextRequest) {
           projectType: project.type as ProjectType,
           styleId: project.styleId,
           currentOutline: (project.outline as unknown as Outline) ?? null,
-          currentVideoSource: (project.videoSource as unknown as VideoSource) ?? { frames: [] },
           params: intent.params,
           userHint: content,
           conversationContext,
         });
         if (result.outline) projectUpdate.outline = result.outline;
-        if (result.videoSource) projectUpdate.videoSource = result.videoSource;
         assistantContent = result.message;
         if (result.outline) {
           assistantMetadata = { kind: 'outline', outline: result.outline };
@@ -148,6 +153,10 @@ export async function POST(req: NextRequest) {
         data: projectUpdate as any,
       });
     }
+    // 大纲结构变化时，同步 frame 表（删除多余分镜、对齐顺序）
+    if (outlineToSync) {
+      await syncFramesToOutline(projectId, outlineToSync);
+    }
 
     // 5) 写助手消息
     const assistantMessage = await prisma.message.create({
@@ -159,14 +168,15 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // 6) 返回
+    // 6) 返回（videoSource 从 frame 表聚合，按 outline 顺序对齐）
+    const finalOutline = (updatedProject.outline as unknown as Outline) ?? null;
     const detail: ProjectDetail = {
       uuid: updatedProject.uuid,
       title: updatedProject.title,
       type: updatedProject.type as 'image' | 'html',
       styleId: updatedProject.styleId,
-      outline: (updatedProject.outline as unknown as Outline) ?? null,
-      videoSource: (updatedProject.videoSource as unknown as VideoSource) ?? null,
+      outline: finalOutline,
+      videoSource: finalOutline ? await getVideoSource(projectId, finalOutline) : null,
       createdAt: updatedProject.createdAt.toISOString(),
       updatedAt: updatedProject.updatedAt.toISOString(),
       hasOutline: !!updatedProject.outline,
@@ -193,15 +203,13 @@ async function handleRegenerateFrame(opts: {
   projectType: ProjectType;
   styleId: string | null;
   currentOutline: Outline | null;
-  currentVideoSource: VideoSource;
   params: Record<string, unknown>;
   conversationContext: string;
 }): Promise<{
   outline?: Outline;
-  videoSource?: VideoSource;
   message: string;
 }> {
-  const { projectId, projectType, styleId, currentOutline, currentVideoSource, params, conversationContext } = opts;
+  const { projectId, projectType, styleId, currentOutline, params, conversationContext } = opts;
 
   if (!currentOutline) {
     return { message: '当前项目还没有大纲，请先生成大纲。' };
@@ -245,16 +253,8 @@ async function handleRegenerateFrame(opts: {
   );
   const newOutline: Outline = { ...currentOutline, frames: newFrames };
 
-  // 2) 重新生成画面 / TTS
-  const newSources = [...currentVideoSource.frames];
-  // 重要：要先清空旧画面，让后续生成逻辑走"新生成"分支
-  newSources[frameIndex0] = {
-    id: targetFrame.id,
-    imagePath: undefined,
-    audioPath: undefined,
-    audioDuration: undefined,
-    htmlCode: undefined,
-  };
+  // 2) 先清空该分镜的旧产物（让生成逻辑走"新生成"分支）
+  await resetFrameMedia(projectId, targetFrame.id);
 
   try {
     await regenerateFrameMedia({
@@ -263,28 +263,16 @@ async function handleRegenerateFrame(opts: {
       styleId,
       outline: newOutline,
       frame: newFrames[frameIndex0],
-      videoSourceEntry: newSources[frameIndex0],
     });
-    // 重新读一次最新 videoSource（regenerateFrameMedia 内部会写库）
-    const refreshed = await prisma.project.findUnique({ where: { uuid: projectId } });
-    if (refreshed?.videoSource) {
-      return {
-        outline: newOutline,
-        videoSource: refreshed.videoSource as unknown as VideoSource,
-        message: `已修改并重新生成分镜 #${frameIndex1}《${newFrames[frameIndex0].title}》的画面和旁白。`,
-      };
-    }
     return {
       outline: newOutline,
-      videoSource: { frames: newSources },
-      message: `已修改分镜 #${frameIndex1}《${newFrames[frameIndex0].title}》的内容。`,
+      message: `已修改并重新生成分镜 #${frameIndex1}《${newFrames[frameIndex0].title}》的画面和旁白。`,
     };
   } catch (err) {
     console.error('[regenerateFrameMedia] 失败', err);
     // 即便画面生成失败，也保留已修改的大纲
     return {
       outline: newOutline,
-      videoSource: { frames: newSources },
       message: `已修改分镜内容，但画面/旁白生成失败：${(err as Error).message}`,
     };
   }
@@ -299,16 +287,14 @@ async function handleAddFrame(opts: {
   projectType: ProjectType;
   styleId: string | null;
   currentOutline: Outline | null;
-  currentVideoSource: VideoSource;
   params: Record<string, unknown>;
   userHint: string;
   conversationContext: string;
 }): Promise<{
   outline?: Outline;
-  videoSource?: VideoSource;
   message: string;
 }> {
-  const { projectId, projectType, styleId, currentOutline, currentVideoSource, params, userHint, conversationContext } = opts;
+  const { projectId, projectType, styleId, currentOutline, params, userHint, conversationContext } = opts;
 
   if (!currentOutline) {
     return { message: '当前项目还没有大纲，请先生成大纲。' };
@@ -347,18 +333,16 @@ async function handleAddFrame(opts: {
   // 3) 插入到大纲
   const { outline: newOutline, insertAt } = insertFrameIntoOutline(currentOutline, newFrame, finalAfterIndex1);
 
-  // 4) 重排 videoSource
-  const realignedVS = realignVideoSource(newOutline, currentVideoSource);
-  // 新分镜位置就是 insertAt，先把该位置清空（无旧画面）
-  realignedVS.frames[insertAt] = { id: newFrame.id };
-
-  // 5) 写库（先把新大纲落库，再生成媒体）
+  // 4) 写库：先落新大纲，再同步 frame 表顺序（新帧此时尚无产物行）
   await prisma.project.update({
     where: { uuid: projectId },
-    data: { outline: newOutline as any, videoSource: realignedVS as any },
+    data: { outline: newOutline as any },
   });
+  await syncFramesToOutline(projectId, newOutline);
 
-  // 6) 生成新分镜的画面 / 旁白
+  // 5) 生成新分镜的画面 / 旁白
+  const posLabel = insertAt + 1; // 1-based
+  const afterLabel = finalAfterIndex1 > 0 ? `第 ${finalAfterIndex1} 镜之后` : '合适的位置';
   try {
     await regenerateFrameMedia({
       projectId,
@@ -366,29 +350,16 @@ async function handleAddFrame(opts: {
       styleId,
       outline: newOutline,
       frame: newOutline.frames[insertAt],
-      videoSourceEntry: realignedVS.frames[insertAt],
     });
-    const refreshed = await prisma.project.findUnique({ where: { uuid: projectId } });
-    const posLabel = insertAt + 1; // 1-based
-    const afterLabel = finalAfterIndex1 > 0 ? `第 ${finalAfterIndex1} 镜之后` : '合适的位置';
-    if (refreshed?.videoSource) {
-      return {
-        outline: newOutline,
-        videoSource: refreshed.videoSource as unknown as VideoSource,
-        message: `已在${afterLabel}插入新分镜 #${posLabel}《${newFrame.title}》，并完成画面和旁白生成。`,
-      };
-    }
     return {
       outline: newOutline,
-      videoSource: realignedVS,
-      message: `已插入新分镜 #${posLabel}《${newFrame.title}》。`,
+      message: `已在${afterLabel}插入新分镜 #${posLabel}《${newFrame.title}》，并完成画面和旁白生成。`,
     };
   } catch (err) {
     console.error('[addFrame] media 失败', err);
     return {
       outline: newOutline,
-      videoSource: realignedVS,
-      message: `已插入新分镜 #${insertAt + 1}《${newFrame.title}》，但画面/旁白生成失败：${(err as Error).message}`,
+      message: `已插入新分镜 #${posLabel}《${newFrame.title}》，但画面/旁白生成失败：${(err as Error).message}`,
     };
   }
 }
@@ -466,9 +437,15 @@ async function regenerateFrameMedia(opts: {
   styleId: string | null;
   outline: Outline;
   frame: FrameOutline;
-  videoSourceEntry: { id: string; [k: string]: unknown };
 }): Promise<void> {
   const { projectId, projectType, styleId, outline, frame } = opts;
+  const idx = outline.frames.findIndex(f => f.id === frame.id);
+  const patch: {
+    htmlCode?: string;
+    imagePath?: string;
+    audioPath?: string | null;
+    audioDuration?: number | null;
+  } = {};
 
   // 1) 画面
   if (projectType === 'image') {
@@ -477,17 +454,16 @@ async function regenerateFrameMedia(opts: {
       frameId: frame.id,
       prompt: frame.imagePrompt || frame.title,
     });
-    opts.videoSourceEntry.imagePath = imgResult.url;
+    patch.imagePath = imgResult.url;
   } else {
     // ⭐ 关键：HTML 模式必须使用项目选中的视觉风格，而不是默认风格
     const stylePreset = getStyleById(styleId) || getDefaultStyle();
     const globalScript = outline.frames.map(f => `[#${f.index}] ${f.title}: ${f.narration}`).join('\n');
-    const prevIdx = outline.frames.findIndex(f => f.id === frame.id) - 1;
+    const prevIdx = idx - 1;
     const previousFrame = prevIdx >= 0 ? outline.frames[prevIdx] : null;
-    // 这里简化：取前一个分镜已生成的 htmlCode（如果有）
-    // 直接通过 outline 索引拿上一镜的 videoSource.htmlCode
+    // 取前一个分镜已生成的 htmlCode（如果有），用于保持风格连续
     const previousHtml = previousFrame
-      ? ((await prisma.project.findUnique({ where: { uuid: projectId } }))?.videoSource as any)?.frames?.[prevIdx]?.htmlCode ?? null
+      ? await getFrameHtml(projectId, previousFrame.id)
       : null;
 
     const htmlCode = await generateFrameHtml({
@@ -496,7 +472,7 @@ async function regenerateFrameMedia(opts: {
       frame,
       previousHtml: previousHtml || null,
     });
-    opts.videoSourceEntry.htmlCode = htmlCode;
+    patch.htmlCode = htmlCode;
   }
 
   // 2) TTS
@@ -506,23 +482,12 @@ async function regenerateFrameMedia(opts: {
       frameId: frame.id,
       text: frame.narration,
     });
-    opts.videoSourceEntry.audioPath = ttsResult.url;
-    opts.videoSourceEntry.audioDuration = ttsResult.duration;
+    patch.audioPath = ttsResult.url;
+    patch.audioDuration = ttsResult.duration;
   } catch (ttsErr) {
     console.error('[regenerateFrameMedia TTS] 失败', ttsErr);
   }
 
-  // 3) 写回 videoSource.frames 对应位置
-  const project = await prisma.project.findUnique({ where: { uuid: projectId } });
-  if (!project) return;
-  const vs = (project.videoSource as unknown as VideoSource) || { frames: [] };
-  const frames = [...vs.frames];
-  const idx = outline.frames.findIndex(f => f.id === frame.id);
-  if (idx >= 0) {
-    frames[idx] = { ...(frames[idx] || { id: frame.id }), ...opts.videoSourceEntry };
-    await prisma.project.update({
-      where: { uuid: projectId },
-      data: { videoSource: { frames } as any },
-    });
-  }
+  // 3) 单帧 upsert
+  await upsertFrame(projectId, frame.id, idx >= 0 ? idx : 0, patch);
 }

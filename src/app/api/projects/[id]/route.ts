@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
+import { getVideoSource, syncFramesToOutline } from '@/lib/frames';
+import type { Outline } from '@/types';
 
 interface RouteContext {
   params: { id: string };
@@ -16,13 +18,15 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
       include: { messages: { orderBy: { createdAt: 'asc' } } },
     });
     if (!project) return NextResponse.json({ error: '项目不存在' }, { status: 404 });
+    const outline = (project.outline as unknown as Outline) ?? null;
+    const videoSource = outline ? await getVideoSource(project.uuid, outline) : null;
     return NextResponse.json({
       uuid: project.uuid,
       title: project.title,
       type: project.type,
       styleId: project.styleId,
       outline: project.outline,
-      videoSource: project.videoSource,
+      videoSource,
       createdAt: project.createdAt.toISOString(),
       updatedAt: project.updatedAt.toISOString(),
       messages: project.messages.map(m => ({
@@ -42,7 +46,6 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
 const patchSchema = z.object({
   title: z.string().min(1).optional(),
   outline: z.any().optional(),
-  videoSource: z.any().optional(),
   styleId: z.string().nullable().optional(),
 });
 
@@ -61,6 +64,10 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       where: { uuid: params.id },
       data: parsed.data,
     });
+    // 若更新了大纲，同步 frame 表（删除多余分镜、对齐顺序）
+    if (parsed.data.outline) {
+      await syncFramesToOutline(project.uuid, parsed.data.outline as unknown as Outline);
+    }
     return NextResponse.json({ uuid: project.uuid });
   } catch (err) {
     console.error('[PATCH /api/projects/[id]]', err);

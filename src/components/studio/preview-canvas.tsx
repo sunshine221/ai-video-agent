@@ -3,7 +3,7 @@
 import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ImageOff, Code2 } from 'lucide-react';
 import { SubtitleLayer } from '@/components/player/subtitle-layer';
-import { splitSubtitles, type SubtitleCue } from '@/lib/subtitle';
+import { splitSubtitles, estimateFrameDuration, type SubtitleCue } from '@/lib/subtitle';
 import { wrapHtmlWithWatchdog, sanitizeAiHtml } from '@/lib/iframe-utils';
 import type { ProjectDetail, FrameSource } from '@/types';
 
@@ -105,7 +105,7 @@ const PreviewBody = forwardRef<HTMLDivElement, PreviewBodyProps>(function Previe
     const idx = project.outline?.frames.findIndex(f => f.id === displayed.id) ?? -1;
     if (idx < 0) return [];
     const frame = project.outline!.frames[idx];
-    const dur = displayed.audioDuration ?? 3;
+    const dur = displayed.audioDuration ?? estimateFrameDuration(frame.narration);
     return splitSubtitles(frame.narration, dur);
   }, [displayed, project.outline]);
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { generateOutline } from '@/lib/ai/outline';
+import { syncFramesToOutline } from '@/lib/frames';
 
 const schema = z.object({
   projectId: z.string().uuid(),
@@ -27,10 +28,11 @@ export async function POST(req: NextRequest) {
       where: { uuid: projectId },
       data: {
         outline: outline as any,
-        videoSource: { frames: outline.frames.map(f => ({ id: f.id })) } as any,
         title: outline.title,
       },
     });
+    // 大纲重建：同步 frame 表（清掉旧分镜产物、对齐新顺序）
+    await syncFramesToOutline(projectId, outline);
 
     return NextResponse.json({ outline, uuid: updated.uuid });
   } catch (err) {

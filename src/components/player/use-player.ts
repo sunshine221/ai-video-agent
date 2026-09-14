@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useStudioStore } from '@/stores/studio-store';
+import { estimateFrameDuration } from '@/lib/subtitle';
 import type { ProjectDetail } from '@/types';
 
 interface UsePlayerResult {
@@ -35,6 +36,25 @@ export function usePlayer(project: ProjectDetail, initialIndex: number): UsePlay
   const setSelectedFrameId = useStudioStore(s => s.setSelectedFrameId);
   const setIsPlayingStore = useStudioStore(s => s.setIsPlaying);
   const initRef = useRef(false);
+
+  // 无音频时 currentTime 定时器的推进步长（秒）
+  const TICK_INTERVAL = 0.1;
+
+  // 推进到下一帧（音频 ended 与无音频定时器共用）
+  const advanceToNext = useCallback(() => {
+    setCurrentIndex(prev => {
+      const outline = project.outline;
+      if (!outline) return prev;
+      if (prev + 1 < outline.frames.length) {
+        const nextIdx = prev + 1;
+        setSelectedFrameId(outline.frames[nextIdx].id);
+        return nextIdx;
+      }
+      // 全部播完
+      setIsPlaying(false);
+      return prev;
+    });
+  }, [project.outline, setSelectedFrameId]);
 
   // 同步 store
   useEffect(() => {
@@ -71,18 +91,7 @@ export function usePlayer(project: ProjectDetail, initialIndex: number): UsePlay
 
     const onEnded = () => {
       // 自动推进到下一帧
-      setCurrentIndex(prev => {
-        const outline = project.outline;
-        if (!outline) return prev;
-        if (prev + 1 < outline.frames.length) {
-          const nextIdx = prev + 1;
-          setSelectedFrameId(outline.frames[nextIdx].id);
-          return nextIdx;
-        }
-        // 全部播完
-        setIsPlaying(false);
-        return prev;
-      });
+      advanceToNext();
     };
 
     audio.addEventListener('timeupdate', onTimeUpdate);
@@ -91,12 +100,34 @@ export function usePlayer(project: ProjectDetail, initialIndex: number): UsePlay
       audio.removeEventListener('timeupdate', onTimeUpdate);
       audio.removeEventListener('ended', onEnded);
     };
-  }, [project.outline, setSelectedFrameId]);
+  }, [advanceToNext]);
 
   // ⭐ 核心：自动播放新帧
   // 依赖 currentIndex + isPlaying
   useEffect(() => {
     if (!isPlaying) return;
+
+    const frameSource = project.videoSource?.frames[currentIndex];
+    const hasAudio = Boolean(frameSource?.audioPath) && Boolean(audioRef.current);
+
+    // 无音频：用定时器推进 currentTime，让字幕正常轮转；到时长后推进下一帧
+    if (!hasAudio) {
+      const narration = project.outline?.frames[currentIndex]?.narration;
+      const duration = frameSource?.audioDuration ?? estimateFrameDuration(narration);
+      setCurrentTime(0);
+      let elapsed = 0;
+      const interval = setInterval(() => {
+        elapsed += TICK_INTERVAL;
+        if (elapsed >= duration) {
+          clearInterval(interval);
+          advanceToNext();
+          return;
+        }
+        setCurrentTime(elapsed);
+      }, TICK_INTERVAL * 1000);
+      return () => clearInterval(interval);
+    }
+
     const audio = audioRef.current;
     if (!audio) return;
 
@@ -148,7 +179,7 @@ export function usePlayer(project: ProjectDetail, initialIndex: number): UsePlay
         clearTimeout(fallbackTimer);
       }
     };
-  }, [currentIndex, isPlaying]);
+  }, [currentIndex, isPlaying, project.videoSource, project.outline, advanceToNext]);
 
   function play() {
     if (!project.outline || project.outline.frames.length === 0) return;
