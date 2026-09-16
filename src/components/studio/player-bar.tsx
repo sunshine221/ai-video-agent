@@ -84,34 +84,33 @@ export function PlayerBar({
           isFs && 'bg-slate-900 text-white',
         )}
       >
-        <Button
-          size="icon"
-          variant={isPlaying ? 'default' : 'secondary'}
-          onClick={onTogglePlay}
-          disabled={!hasFrames || isExportBusy}
-          title={isPlaying ? '暂停' : '播放（连续播放所有分镜）'}
-        >
-          {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-        </Button>
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={onStop}
-          disabled={!hasFrames || isExportBusy}
-          title="停止"
-          className={isFs ? 'hover:bg-slate-800 text-white' : ''}
-        >
-          <Square className="h-3.5 w-3.5" />
-        </Button>
-
-        <div className="flex-1">
-          <div className={cn('h-1.5 w-full overflow-hidden rounded-full', isFs ? 'bg-slate-700' : 'bg-slate-200')}>
-            <div
-              className="h-full bg-primary transition-all duration-100"
-              style={{ width: `${progressPct}%` }}
-            />
-          </div>
-        </div>
+        {/* 播放/停止/进度由下方 Timeline 统一承担，这里仅保留全屏时的播放控制 */}
+        {isFs && (
+          <>
+            <Button
+              size="icon"
+              variant={isPlaying ? 'default' : 'secondary'}
+              onClick={onTogglePlay}
+              disabled={!hasFrames || isExportBusy}
+              title={isPlaying ? '暂停' : '播放'}
+            >
+              {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={onStop}
+              disabled={!hasFrames || isExportBusy}
+              title="停止"
+              className="hover:bg-slate-800 text-white"
+            >
+              <Square className="h-3.5 w-3.5" />
+            </Button>
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-700">
+              <div className="h-full bg-primary transition-all duration-100" style={{ width: `${progressPct}%` }} />
+            </div>
+          </>
+        )}
 
         <div className={cn('font-mono text-xs tabular-nums', isFs ? 'text-slate-300' : 'text-muted-foreground')}>
           {formatDuration(currentTime)}/{formatDuration(totalDuration)}
@@ -119,6 +118,7 @@ export function PlayerBar({
             ({project.outline?.frames.length ?? 0} 镜)
           </span>
         </div>
+        {!isFs && <div className="flex-1" />}
 
         {exportMessage ? (
           <div className={cn('max-w-56 truncate text-xs', exportStatus === 'failed' ? 'text-red-500' : isFs ? 'text-slate-300' : 'text-muted-foreground')}>

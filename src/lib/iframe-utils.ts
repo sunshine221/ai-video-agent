@@ -33,12 +33,6 @@ export function wrapHtmlWithWatchdog(innerHtml: string, watchdogMs = WATCHDOG_DE
   body { display: block; position: relative; }
   /* ⭐ 把 AI 内容包在唯一容器里，让容器铺满 body — 既保证铺满，又不破坏 AI 内部各元素的尺寸/定位 */
   .ai-stage { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; }
-  /* 看门狗触发后的样式 */
-  body.frozen *, body.frozen *::before, body.frozen *::after {
-    animation: none !important;
-    transition: none !important;
-    animation-play-state: paused !important;
-  }
   /* ⭐ 音频驱动分步：带 data-step 的元素默认隐藏，按音频播放进度逐步激活淡入 */
   [data-step] { opacity: 0; transition: opacity .45s ease; }
   [data-step].ai-step-active { opacity: 1; }
@@ -78,38 +72,47 @@ ${extracted.head}
         else stepEls[i].classList.remove('ai-step-active');
       }
     }
+    // ===== ⭐ WAAPI 时间驱动：把所有动画钉死在 timeMs 对应的相位 =====
+    // 核心：document.getAnimations() 能抓到页面里全部 Animation（含 CSS @keyframes 生成的
+    // CSSAnimation）。逐个 pause() 夺取控制权后设 currentTime，画面就成了 timeMs 的纯函数——
+    // 播放/拖动/暂停都只是"设不同的 timeMs"，任意时刻都能静态还原，且可复现。
+    // 注：data-step 的淡入是 CSSTransition，故意跳过不接管，保留其自然淡入手感。
+    function driveAnimations(timeMs) {
+      if (typeof document.getAnimations !== 'function') return;
+      var anims = document.getAnimations();
+      for (var i = 0; i < anims.length; i++) {
+        var a = anims[i];
+        if (typeof CSSTransition !== 'undefined' && a instanceof CSSTransition) continue;
+        try {
+          a.pause();
+          a.currentTime = timeMs;
+        } catch (err) {}
+      }
+    }
+
     window.addEventListener('message', function(e) {
       var d = e.data;
       if (!d || d.type !== '__ai_video_step_progress') return;
       applyProgress(typeof d.progress === 'number' ? d.progress : 0);
+      if (typeof d.timeMs === 'number') driveAnimations(d.timeMs);
     });
 
-    // ===== 看门狗：仅对"未采用分步协议"的旧 HTML 生效 =====
-    // 分步 HTML 由音频进度驱动、无需自计时动画，不能被冻结。
-    var frozen = false;
-    function freeze() {
-      if (frozen || hasSteps) return;
-      frozen = true;
+    // ===== 安全网：中和自计时循环（防御纵深）=====
+    // WAAPI 方案下，动画一律由父窗口下发的 timeMs 驱动（见 driveAnimations），
+    // 已明令禁止 requestAnimationFrame / setInterval 驱动动画（生成期 prompt 约束 + 校验拦截）。
+    // 这里在超时后把它们中和掉，作为"万一漏网"的兜底，避免自计时循环破坏确定性或跑满 CPU。
+    // ⚠️ 不再冻结 CSS 动画——它们已被 driveAnimations 逐帧 pause 并钉在 timeMs 相位，冻结会破坏 WAAPI 控制。
+    var neutralized = false;
+    function neutralizeSelfTimers() {
+      if (neutralized) return;
+      neutralized = true;
       try {
-        // 1) 停所有 CSS 动画
-        document.body.classList.add('frozen');
-        // 2) 覆盖 setInterval / setTimeout，让新的定时器直接 no-op
         window.setInterval = function() { return -1; };
-        window.setTimeout = function(fn, t) {
-          if (t === 0 || (typeof fn === 'function')) {
-            // setTimeout(fn, 0) 之类的关键任务仍然放行
-            var id = setTimeoutOrig(function(){ try { fn(); } catch(e){} }, Math.min(t || 0, 100));
-            return id;
-          }
-          return -1;
-        };
-        // 3) 停掉 requestAnimationFrame 链
         window.requestAnimationFrame = function() { return 0; };
-        // 4) 尝试清掉现有 interval
-        for (var i = 1; i < 99999; i++) { clearInterval(i); clearTimeout(i); }
+        for (var i = 1; i < 99999; i++) { clearInterval(i); }
       } catch (e) {}
     }
-    setTimeoutOrig(freeze, WATCHDOG_MS);
+    setTimeoutOrig(neutralizeSelfTimers, WATCHDOG_MS);
 
     // ⭐ 把内容"设计尺寸"上报给父窗口（父窗口用这个来计算 transform: scale）
     function reportSize() {
@@ -138,9 +141,11 @@ ${extracted.head}
     setTimeoutOrig(reportSize, 1000);
 
     // 收集分步元素并激活第 0 步（首屏立即可见，不必等父窗口第一条进度）
+    // ⭐ 同时把所有动画 pause 并钉到 timeMs=0，堵住"父窗口首条进度前动画自由跑"的缺口。
     function initSteps() {
       collectSteps();
       if (hasSteps) applyProgress(0);
+      driveAnimations(0);
     }
     if (document.readyState === 'complete') {
       reportSize();

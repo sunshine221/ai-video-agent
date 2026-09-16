@@ -1,4 +1,5 @@
 import { callAIJson } from './client';
+import { findBannedAnimations } from './html';
 import type { Outline, FrameSource, ProjectType } from '@/types';
 
 /**
@@ -26,7 +27,8 @@ export type IssueCategory =
   | 'typo'             // 错别字/标点/文案小瑕疵
   | 'layout'           // 局部排版溢出
   | 'cross_frame'      // 内容串帧（抄了别帧文案）
-  | 'style_drift';     // 风格漂移
+  | 'style_drift'      // 风格漂移
+  | 'banned_animation'; // 含禁用的自计时动画写法（rAF/setInterval/canvas 逐帧），无法被时间轴定格
 
 export interface ReviewIssue {
   frameId: string;
@@ -50,6 +52,7 @@ const CATEGORY_SEVERITY: Record<IssueCategory, IssueSeverity> = {
   layout: 'simple',
   cross_frame: 'complex',
   style_drift: 'complex',
+  banned_animation: 'complex', // 自计时写法需整帧重写，无法局部修
 };
 
 export function severityOf(category: IssueCategory): IssueSeverity {
@@ -109,6 +112,19 @@ export function runDeterministicChecks(
             frame.id,
             'bad_steps',
             `第 ${frame.index} 镜 data-step 数量为 ${steps}（至少需要 ${MIN_STEPS} 步），分步动画可能失效`,
+          ),
+        );
+      }
+
+      // 禁用的自计时动画写法（rAF/setInterval/canvas 逐帧）：无法被时间轴精确定格，
+      // 会破坏"拖动到任意时刻静态还原 + 导出一致性"。命中即整帧重生成。
+      const banned = findBannedAnimations(src.htmlCode);
+      if (banned.length > 0) {
+        issues.push(
+          mkIssue(
+            frame.id,
+            'banned_animation',
+            `第 ${frame.index} 镜含禁用的自计时动画写法（${banned.join('、')}），无法被时间轴定格，需重新生成`,
           ),
         );
       }

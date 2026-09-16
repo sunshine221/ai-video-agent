@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useStudioStore } from '@/stores/studio-store';
 import { estimateFrameDuration } from '@/lib/subtitle';
 import type { ProjectDetail } from '@/types';
@@ -16,6 +16,12 @@ interface UsePlayerResult {
   pause: () => void;
   seekToFrame: (frameId: string) => void;
   playFromIndex: (index: number) => void;
+  /** 按全局时间（秒）定位到任意帧内任意位置；opts.play 为 true 则从该点继续播放 */
+  seekToGlobalTime: (globalT: number, opts?: { play?: boolean }) => void;
+  /** 每个分镜的时长（秒），按大纲顺序 */
+  frameDurations: number[];
+  /** 全部分镜总时长（秒） */
+  totalDuration: number;
 }
 
 /**
@@ -36,9 +42,25 @@ export function usePlayer(project: ProjectDetail, initialIndex: number): UsePlay
   const setSelectedFrameId = useStudioStore(s => s.setSelectedFrameId);
   const setIsPlayingStore = useStudioStore(s => s.setIsPlaying);
   const initRef = useRef(false);
+  // ⭐ seek 到帧内偏移（秒）：切帧后音频/定时器从这个偏移起播，而非固定从 0
+  const seekOffsetRef = useRef(0);
 
   // 无音频时 currentTime 定时器的推进步长（秒）
   const TICK_INTERVAL = 0.1;
+
+  // ⭐ 每个分镜时长（秒）：有音频用真实 audioDuration，否则按旁白字数估算
+  const frameDurations = useMemo(() => {
+    const frames = project.outline?.frames ?? [];
+    return frames.map((f, i) => {
+      const fs = project.videoSource?.frames[i];
+      return fs?.audioDuration ?? estimateFrameDuration(f.narration);
+    });
+  }, [project.outline, project.videoSource]);
+
+  const totalDuration = useMemo(
+    () => frameDurations.reduce((sum, d) => sum + d, 0),
+    [frameDurations],
+  );
 
   // 推进到下一帧（音频 ended 与无音频定时器共用）
   const advanceToNext = useCallback(() => {
@@ -102,6 +124,21 @@ export function usePlayer(project: ProjectDetail, initialIndex: number): UsePlay
     };
   }, [advanceToNext]);
 
+  // ⭐ 播放时用 rAF（60fps）读 audio.currentTime 驱动 currentTime，
+  // 让 WAAPI 动画随 timeMs 丝滑推进（timeupdate 仅 ~4/s 会卡顿）。
+  useEffect(() => {
+    if (!isPlaying) return;
+    const audio = audioRef.current;
+    if (!audio) return; // 无音频帧由定时器分支自行推进 currentTime
+    let raf = 0;
+    const tick = () => {
+      if (!audio.paused) setCurrentTime(audio.currentTime);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying, currentIndex]);
+
   // ⭐ 核心：自动播放新帧
   // 依赖 currentIndex + isPlaying
   useEffect(() => {
@@ -114,8 +151,10 @@ export function usePlayer(project: ProjectDetail, initialIndex: number): UsePlay
     if (!hasAudio) {
       const narration = project.outline?.frames[currentIndex]?.narration;
       const duration = frameSource?.audioDuration ?? estimateFrameDuration(narration);
-      setCurrentTime(0);
-      let elapsed = 0;
+      // ⭐ 从 seek 偏移起播（拖动时间轴后继续播放），用完即清零
+      let elapsed = Math.max(0, Math.min(seekOffsetRef.current, duration));
+      seekOffsetRef.current = 0;
+      setCurrentTime(elapsed);
       const interval = setInterval(() => {
         elapsed += TICK_INTERVAL;
         if (elapsed >= duration) {
@@ -137,8 +176,11 @@ export function usePlayer(project: ProjectDetail, initialIndex: number): UsePlay
 
     const playNow = () => {
       if (cancelled) return;
+      // ⭐ 从 seek 偏移起播（拖动时间轴后继续播放），用完即清零
+      const offset = Math.max(0, seekOffsetRef.current);
+      seekOffsetRef.current = 0;
       try {
-        audio.currentTime = 0;
+        audio.currentTime = offset;
       } catch {
         // readyState 不够时设置 currentTime 会抛错，忽略
       }
@@ -244,6 +286,55 @@ export function usePlayer(project: ProjectDetail, initialIndex: number): UsePlay
     [project.outline, setSelectedFrameId],
   );
 
+  // ⭐ 按全局时间定位到"任意帧内任意位置"（时间轴红线拖动的核心）
+  const seekToGlobalTime = useCallback(
+    (globalT: number, opts?: { play?: boolean }) => {
+      const outline = project.outline;
+      if (!outline || outline.frames.length === 0) return;
+      const clamped = Math.max(0, Math.min(globalT, totalDuration));
+      // 累加各帧时长，定位落在哪一帧、帧内偏移多少
+      let acc = 0;
+      let idx = 0;
+      let offset = 0;
+      for (let i = 0; i < frameDurations.length; i++) {
+        const d = frameDurations[i];
+        if (clamped < acc + d || i === frameDurations.length - 1) {
+          idx = i;
+          offset = Math.max(0, Math.min(clamped - acc, d));
+          break;
+        }
+        acc += d;
+      }
+
+      // 记录帧内偏移，供切帧后的播放分支从此处起播
+      seekOffsetRef.current = offset;
+      setCurrentIndex(idx);
+      setSelectedFrameId(outline.frames[idx].id);
+      setCurrentTime(offset);
+
+      const a = audioRef.current;
+      if (opts?.play) {
+        setIsPlaying(true);
+        // 播放态下由自动播放 effect 依据 seekOffsetRef 起播，这里无需手动 seek 音频
+      } else {
+        // 暂停态：定位画面（currentTime 已更新→驱动 iframe 定格），并把音频对齐到偏移
+        setIsPlaying(false);
+        if (a) {
+          const applyAudioOffset = () => {
+            try { a.currentTime = offset; } catch {}
+          };
+          if (a.readyState >= 1 /* HAVE_METADATA */) applyAudioOffset();
+          else {
+            const once = () => { a.removeEventListener('loadedmetadata', once); applyAudioOffset(); };
+            a.addEventListener('loadedmetadata', once);
+          }
+          a.pause();
+        }
+      }
+    },
+    [project.outline, frameDurations, totalDuration, setSelectedFrameId],
+  );
+
   return {
     isPlaying,
     currentTime,
@@ -255,5 +346,8 @@ export function usePlayer(project: ProjectDetail, initialIndex: number): UsePlay
     pause,
     seekToFrame,
     playFromIndex,
+    seekToGlobalTime,
+    frameDurations,
+    totalDuration,
   };
 }

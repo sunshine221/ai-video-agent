@@ -8,9 +8,27 @@ import { env } from '@/lib/env';
 export const aiClient = new OpenAI({
   apiKey: env.AI_API_KEY,
   baseURL: env.AI_BASE_URL,
+  // 中转站偶发瞬断/超时：让 SDK 层对连接类错误自动指数退避重试，
+  // 比只靠上层业务循环更稳。timeout 放宽以容纳 HTML 长文本生成（max_tokens 16000）。
+  timeout: 120_000, // 单次请求 2 分钟超时
+  maxRetries: 3,    // 连接错误 / 429 / 5xx 由 SDK 自动重试
 });
 
 export const DEFAULT_MODEL = env.AI_MODEL;
+
+/**
+ * 判断错误是否属于"模型返回了内容但不合规"（解析失败 / 被截断 / 空），
+ * 这类才值得在重试时追加纠正提示。连接类错误（APIConnectionError / 超时）
+ * 根本没拿到返回，返回 false，重试时保持原始 prompt。
+ */
+function isContentError(err: unknown): boolean {
+  // JSON.parse 抛的语法错误
+  if (err instanceof SyntaxError) return true;
+  // 本模块内主动抛的内容类错误
+  const msg = (err as Error)?.message || '';
+  if (/返回内容为空|被长度限制截断|JSON 不完整/.test(msg)) return true;
+  return false;
+}
 
 /**
  * JSON 模式调用：要求 AI 返回严格 JSON
@@ -54,8 +72,13 @@ export async function callAIJson<T = unknown>(opts: {
     } catch (err) {
       lastError = err;
       console.error(`[callAIJson] attempt ${attempt + 1}/${maxRetries + 1} failed:`, (err as Error).message);
-      // 下一次重试时把错误信息塞进 user prompt 引导 AI 自纠
-      currentUser = `${user}\n\n【注意】上一次返回的 JSON 解析失败，错误信息：${(err as Error).message}。请严格按 JSON 规范返回完整内容，不要包含多余文本，不要截断。`;
+      // 只有"模型返回了内容但不合规"（解析失败/截断/空）才追加纠正提示引导自纠；
+      // 连接类错误（Connection error / 超时）根本没拿到返回，追加提示只会污染 prompt。
+      if (isContentError(err)) {
+        currentUser = `${user}\n\n【注意】上一次返回的 JSON 解析失败，错误信息：${(err as Error).message}。请严格按 JSON 规范返回完整内容，不要包含多余文本，不要截断。`;
+      } else {
+        currentUser = user; // 网络类错误：保持原始 prompt 原样重试
+      }
     }
   }
   throw lastError instanceof Error ? lastError : new Error('AI 调用失败');

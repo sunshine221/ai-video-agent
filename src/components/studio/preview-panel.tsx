@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useStudioStore } from '@/stores/studio-store';
 import { PlayerBar } from './player-bar';
-import { StoryboardStrip } from './storyboard-strip';
+import { Timeline } from './timeline';
 import { PreviewCanvas } from './preview-canvas';
 import { PreviewToolbar } from './preview-toolbar';
 import { ExportRecordingOverlay } from './export-recording-overlay';
@@ -28,6 +28,8 @@ interface ExportJob {
 export function PreviewPanel({ project, onProjectChange, onFrameSelect }: PreviewPanelProps) {
   const selectedFrameId = useStudioStore(s => s.selectedFrameId);
   const showSubtitle = useStudioStore(s => s.showSubtitle);
+  const generatingFrameId = useStudioStore(s => s.generatingFrameId);
+  const generationPhase = useStudioStore(s => s.generationPhase);
   const previewStageRef = useRef<HTMLDivElement>(null);
   const previewCanvasRef = useRef<HTMLDivElement>(null);
   // 服务端导出：SSE 连接的 AbortController，用于前端断开观察
@@ -63,19 +65,9 @@ export function PreviewPanel({ project, onProjectChange, onFrameSelect }: Previe
     return project.videoSource.frames[displayIndex] ?? null;
   }, [displayIndex, project.videoSource]);
 
-  // 每个分镜的时长
-  const frameDurations = useMemo(() => {
-    if (!project.videoSource || !project.outline) return [] as number[];
-    return project.outline.frames.map((_, i) => {
-      const fs = project.videoSource!.frames[i];
-      return fs?.audioDuration ?? 3;
-    });
-  }, [project.videoSource, project.outline]);
-
-  const totalDuration = useMemo(
-    () => frameDurations.reduce((sum, d) => sum + d, 0),
-    [frameDurations],
-  );
+  // 每个分镜的时长 / 总时长（复用 usePlayer 的单一来源，避免重复计算口径不一致）
+  const frameDurations = player.frameDurations;
+  const totalDuration = player.totalDuration;
 
   // 全局累计播放时间
   const globalCurrentTime = useMemo(() => {
@@ -281,11 +273,20 @@ export function PreviewPanel({ project, onProjectChange, onFrameSelect }: Previe
           if (!player.isPlaying) player.play();
         }}
       />
-      <StoryboardStrip
+      <Timeline
         project={project}
         onProjectChange={onProjectChange}
+        frameDurations={frameDurations}
+        totalDuration={totalDuration}
+        currentTime={globalCurrentTime}
+        isPlaying={player.isPlaying}
+        onSeek={player.seekToGlobalTime}
+        onTogglePlay={player.togglePlay}
+        onStop={player.stop}
         selectedFrameId={selectedFrameId}
         onFrameSelect={onFrameSelect}
+        generatingFrameId={generatingFrameId}
+        generationPhase={generationPhase}
       />
     </div>
   );

@@ -43,6 +43,47 @@ export const FRAME_HTML_SYSTEM = `你是一位网页动画视频设计工程师�
 - ⚠️ 不要再依赖 CSS \`animation-delay\` / \`@keyframes\` 去控制"第几秒出现什么"——那条时间线和音频对不上。步骤出现时机完全交给 data-step + 播放器。
 - 允许保留纯装饰性的循环微动效（如缓慢浮动、光标闪烁），但**关键内容的出现顺序**必须靠 data-step。
 
+## ⭐⭐ 动画硬性规范（最高优先级，违反将被判为生成失败并重来）⭐⭐
+播放器需要把画面"钉"在任意时刻做静态还原（拖动时间轴预览），因此**所有动画必须是"时间可寻址"的**——即给定时间点，画面唯一确定。请严格遵守：
+- ✅ **只允许**用 CSS \`@keyframes\`/\`animation\` 或 CSS \`transition\`，或 Web Animations API（\`element.animate(...)\`）来做动画。这些都能被播放器统一定格。
+- ✅ 每个动画都必须有**明确的 \`duration\`**，并加上 \`animation-fill-mode: both\`（CSS）或 \`{ fill: 'both' }\`（WAAPI），保证动画在起点前/终点后仍保持首帧/末帧，不会消失或跳变。
+- ✅ 动画时长不要超过本帧目标时长。
+- ❌ **严禁使用 \`requestAnimationFrame\`** 来驱动任何动画或逐帧计算。
+- ❌ **严禁使用 \`setInterval\` / \`setTimeout\`** 来驱动动画、逐帧更新样式、或控制"第几秒出现什么"。
+- ❌ **严禁使用 \`<canvas>\` 逐帧绘制动画**（Canvas 内容无法被时间寻址）。如需图形动画请用 SVG + CSS/WAAPI。
+- ❌ 严禁任何"用 JS 自己读时钟（Date.now/performance.now）算时间再改样式"的自计时写法。
+- 原因：上述被禁的写法都依赖"浏览器墙上时钟"自行推进，无法被拖到任意时刻精确还原，会破坏时间轴预览与导出一致性。
+
+### 物理感动画怎么做（不用 rAF 也能实现）
+- 重力下落/弹跳：用 \`cubic-bezier\` 缓动曲线或多段 keyframes 模拟。
+- 惯性缓停：用 \`ease-out\`。弹性回弹：用"过冲再回弹"的 cubic-bezier。
+- 摆动/呼吸：用往复 keyframes + \`ease-in-out\`。
+- 沿路径运动：用 SVG \`offset-path\` 或 \`stroke-dashoffset\` 动画。
+
+### WAAPI 正例
+\`\`\`html
+<div id="ball"></div>
+<script>
+  // ✅ 有明确 duration + fill:both，可被播放器定格到任意时刻
+  document.getElementById('ball').animate(
+    [{ transform: 'translateY(0)' }, { transform: 'translateY(300px)' }],
+    { duration: 1200, easing: 'cubic-bezier(.5,.05,1,.3)', fill: 'both' }
+  );
+</script>
+\`\`\`
+
+### 反例（禁止）
+\`\`\`html
+<script>
+  // ❌ requestAnimationFrame 自计时，无法被时间寻址
+  let x = 0;
+  function loop(){ x += 2; el.style.left = x + 'px'; requestAnimationFrame(loop); }
+  requestAnimationFrame(loop);
+  // ❌ setInterval 驱动动画
+  setInterval(() => { el.style.opacity = Math.random(); }, 100);
+</script>
+\`\`\`
+
 ### 分步示例（结构示意）
 \`\`\`html
 <div class="stage">
@@ -57,7 +98,7 @@ export const FRAME_HTML_SYSTEM = `你是一位网页动画视频设计工程师�
 ## 输出要求
 - 输出严格 JSON：{ "html": "完整 HTML 文档" }
 - HTML 文档必须是完整可独立运行的（含 <!DOCTYPE html>）
-- 用 HTML + CSS + JS（内联）实现；可用 SVG、Canvas、MathML
+- 用 HTML + CSS + JS（内联）实现；可用 SVG、MathML（❌ 禁止用 <canvas> 逐帧绘制动画）
 - ⭐ 关键内容（标题/正文/主体图形）拆分到 data-step，按旁白顺序编号；常驻元素不加 data-step
 - ⭐ 不要写"铺满时长"的自计时动画；出现节奏交给 data-step + 播放器音频进度
 - ⭐ 不要给 data-step 元素写 opacity:0 / 入场动画（播放器会统一处理淡入）
@@ -91,16 +132,51 @@ export async function generateFrameHtml(opts: {
 
   const userPrompt = `【全局脚本】\n${globalScript}\n\n【视觉风格规范——必须严格遵守的硬性设计系统】\n${stylePrompt}\n\n【本帧动画目标时长】\n${durationLine}\n\n【当前分镜——本帧唯一的文字内容来源】\n标题：${frame.title}\n旁白：${frame.narration}\n${designBlock}\n\n【首帧（风格基准）HTML——⚠️ 只借鉴配色/字体/布局/装饰/动画风格，禁止复制其文字内容；生成首帧时为"无"】\n${firstHtml || '无'}\n\n【上一分镜 HTML——⚠️ 同样只借鉴风格，禁止复制文字内容；无则填"无"】\n${previousHtml || '无'}\n\n请按系统提示词要求输出 JSON：{ "html": "..." }。再次强调：①本帧展示的所有文字必须来自上面"当前分镜"，不得出现其它分镜的文案；②视觉风格（背景/配色/字体/布局/装饰/动画节奏）必须与风格规范和首帧基准完全一致；③按"画面设计"里的布局与分步节奏组织内容，并注意与上一镜的视觉衔接。`;
 
-  const res = await callAIJson<{ html: string }>({
-    system: FRAME_HTML_SYSTEM,
-    user: userPrompt,
-    temperature: 0.5, // 降低随机性，保证各分镜风格更统一
-    maxRetries: 2,
-    maxTokens: 16000, // HTML 动画通常上万字符，避免输出被截断
-  });
-  const html = normalizeDataSteps(sanitizeHtml(res.html || ''));
-  if (!html.trim()) throw new Error('生成的 HTML 为空');
-  return html;
+  // 生成 → 校验"时间可寻址"硬性规范 → 命中禁用写法则带纠正提示重生成（有界）。
+  // 这样把"防 AI 幻觉出自计时动画"闭环在生成期，而不是等到终检才发现。
+  const MAX_ANIM_REPAIR = 2;
+  let lastBanned: string[] = [];
+  for (let attempt = 0; attempt <= MAX_ANIM_REPAIR; attempt++) {
+    const correction = lastBanned.length
+      ? `\n\n【⚠️ 上一次生成不合格：检测到被禁止的自计时写法 ${lastBanned.join('、')}】\n这些写法无法被时间轴精确定格，属于硬性违规。请重写本帧动画：改用 CSS @keyframes/animation/transition 或 Web Animations API（element.animate，带明确 duration 和 fill:'both'），彻底删除 requestAnimationFrame / setInterval / <canvas> 逐帧绘制等一切自计时逻辑。`
+      : '';
+
+    const res = await callAIJson<{ html: string }>({
+      system: FRAME_HTML_SYSTEM,
+      user: userPrompt + correction,
+      temperature: 0.5, // 降低随机性，保证各分镜风格更统一
+      maxRetries: 2,
+      maxTokens: 16000, // HTML 动画通常上万字符，避免输出被截断
+    });
+    const html = normalizeDataSteps(sanitizeHtml(res.html || ''));
+    if (!html.trim()) throw new Error('生成的 HTML 为空');
+
+    const banned = findBannedAnimations(html);
+    if (banned.length === 0) return html;
+    lastBanned = banned;
+    console.warn(`[frame ${frame.id}] 命中禁用动画写法 ${banned.join('、')}，第 ${attempt + 1} 次重生成`);
+  }
+  // 有界重试后仍违规：抛错，交由上层"补齐/终检"重试或让用户点重新生成
+  throw new Error(`生成的 HTML 含禁用的自计时动画写法（${lastBanned.join('、')}），无法被时间轴定格`);
+}
+
+/**
+ * 被禁止的"自计时 / 非时间可寻址"动画写法。命中任一都会导致画面无法被时间轴精确定格，
+ * 破坏"拖动到任意时刻静态还原 + 导出一致性"，因此在生成期和终检都要拦截。
+ *
+ * 注意：只拦最明确的三类（rAF / setInterval / canvas 逐帧）。setTimeout/Date.now 等
+ * 存在合法一次性用法，为避免误杀导致无谓重生成，仅在系统提示里劝阻、不做硬校验。
+ */
+const BANNED_ANIMATION_PATTERNS: { re: RegExp; label: string }[] = [
+  { re: /requestAnimationFrame/i, label: 'requestAnimationFrame' },
+  { re: /\bsetInterval\s*\(/i, label: 'setInterval' },
+  { re: /<canvas[\s/>]/i, label: '<canvas>' },
+];
+
+/** 返回命中的禁用写法标签列表；空数组表示合规。 */
+export function findBannedAnimations(html: string): string[] {
+  if (!html) return [];
+  return BANNED_ANIMATION_PATTERNS.filter(p => p.re.test(html)).map(p => p.label);
 }
 
 /**

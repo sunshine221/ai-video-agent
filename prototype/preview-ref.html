@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>手绘线稿动画预览</title>
+  <style>
+    *{box-sizing:border-box}
+    html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#f4efe2}
+    #stage{position:relative;width:100%;height:100%;overflow:hidden;background:radial-gradient(circle at 24% 18%,rgba(255,255,255,.74),transparent 35%),#f4efe2}
+    #stage:after{content:"";position:absolute;inset:0;opacity:.1;pointer-events:none;mix-blend-mode:multiply;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.24'/%3E%3C/svg%3E")}
+    canvas{position:absolute;inset:0;width:100%;height:100%}
+    #hand{position:absolute;z-index:2;width:22%;height:auto;opacity:0;transform:translate(-1.1%,-1.1%);transform-origin:1.1% 1.1%;filter:drop-shadow(4px 6px 6px rgba(39,27,13,.13));will-change:left,top,opacity}
+    .asset{display:none}
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="canvas" width="960" height="540"></canvas>
+    <img id="hand" src="/html-video/whiteboard/hand-marker-v1.png" alt="" />
+    <img id="source" class="asset" src="/html-video/whiteboard/card/source.png" alt="" />
+    <img id="order" class="asset" src="/html-video/whiteboard/card/order.png" alt="" />
+  </div>
+  <script src="/html-video/whiteboard/card/route.js"></script>
+  <script>
+    (()=>{
+      const canvas=document.getElementById('canvas');
+      const context=canvas.getContext('2d',{alpha:false});
+      const source=document.getElementById('source');
+      const order=document.getElementById('order');
+      const hand=document.getElementById('hand');
+      const route=window.WHITEBOARD_ROUTE||[];
+      const sourceCanvas=document.createElement('canvas');
+      const orderCanvas=document.createElement('canvas');
+      sourceCanvas.width=orderCanvas.width=canvas.width;
+      sourceCanvas.height=orderCanvas.height=canvas.height;
+      let sourcePixels=null;
+      let orderPixels=null;
+      let outputPixels=null;
+      let startTime=0;
+      let lastFrame=-1;
+      const duration=8000;
+      const drawDuration=7150;
+
+      const pointAt=(progress)=>{
+        if(!route.length)return null;
+        let low=0,high=route.length-1;
+        while(low<high){const middle=Math.floor((low+high)/2);if(route[middle].p<progress)low=middle+1;else high=middle;}
+        return route[low];
+      };
+      const render=(progress,drawing)=>{
+        if(!sourcePixels||!orderPixels||!outputPixels)return;
+        const threshold=Math.min(254,Math.floor(progress*254));
+        const sourceData=sourcePixels.data;
+        const orderData=orderPixels.data;
+        const outputData=outputPixels.data;
+        for(let offset=0;offset<outputData.length;offset+=4){
+          const visible=orderData[offset]<255&&orderData[offset]<=threshold;
+          if(visible){outputData[offset]=sourceData[offset];outputData[offset+1]=sourceData[offset+1];outputData[offset+2]=sourceData[offset+2];}
+          else{outputData[offset]=244;outputData[offset+1]=239;outputData[offset+2]=226;}
+          outputData[offset+3]=255;
+        }
+        context.putImageData(outputPixels,0,0);
+        const point=pointAt(progress);
+        if(point){hand.style.left=(point.x/960*100)+'%';hand.style.top=(point.y/540*100)+'%';}
+        hand.style.opacity=drawing&&progress>.01?'1':'0';
+      };
+      const prepare=()=>{
+        if(!source.complete||!order.complete||!source.naturalWidth||!order.naturalWidth)return;
+        const sourceContext=sourceCanvas.getContext('2d',{willReadFrequently:true});
+        const orderContext=orderCanvas.getContext('2d',{willReadFrequently:true});
+        sourceContext.drawImage(source,0,0,canvas.width,canvas.height);
+        orderContext.drawImage(order,0,0,canvas.width,canvas.height);
+        sourcePixels=sourceContext.getImageData(0,0,canvas.width,canvas.height);
+        orderPixels=orderContext.getImageData(0,0,canvas.width,canvas.height);
+        outputPixels=context.createImageData(canvas.width,canvas.height);
+        render(0,false);
+      };
+      const tick=(now)=>{
+        if(!startTime)startTime=now;
+        const elapsed=(now-startTime)%duration;
+        const frame=Math.floor(elapsed/33.333);
+        if(frame!==lastFrame&&sourcePixels){
+          lastFrame=frame;
+          const drawing=elapsed<drawDuration;
+          render(drawing?elapsed/drawDuration:1,drawing);
+        }
+        requestAnimationFrame(tick);
+      };
+      source.addEventListener('load',prepare);
+      order.addEventListener('load',prepare);
+      prepare();
+      requestAnimationFrame(tick);
+    })();
+  </script>
+</body>
+</html>

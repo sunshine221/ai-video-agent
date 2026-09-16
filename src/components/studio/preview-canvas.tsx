@@ -298,10 +298,13 @@ function HtmlFrame({
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
     const dur = Math.max(0.001, frameDuration);
-    let progress = (currentTime ?? 0) / dur;
+    const t = currentTime ?? 0;
+    let progress = t / dur;
     if (progress < 0) progress = 0;
     if (progress > 1) progress = 1;
-    win.postMessage({ type: '__ai_video_step_progress', progress }, '*');
+    // ⭐ 同时下发 progress（驱动 data-step 显隐）与 timeMs（驱动所有动画钉到该毫秒相位）
+    const timeMs = Math.max(0, t * 1000);
+    win.postMessage({ type: '__ai_video_step_progress', progress, timeMs }, '*');
   }, [currentTime, frameDuration]);
 
   // ResizeObserver：容器尺寸变化时重新计算 scale + 显式 left/top 居中

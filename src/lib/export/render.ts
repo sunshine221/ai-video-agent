@@ -3,7 +3,8 @@
  *
  * 核心思路（与前端预览完全对齐）：
  * - HTML 用 wrapHtmlWithWatchdog 包裹（复用前端同款包装）
- * - 动画由「音频进度」驱动：逐帧 postMessage({ type:'__ai_video_step_progress', progress })
+ * - 动画由「音频进度」驱动：逐帧 postMessage({ type:'__ai_video_step_progress', progress, timeMs })
+ *   progress 控制 data-step 淡入节奏，timeMs 把 WAAPI/CSS 动画定格到当前时刻（时间可寻址）
  * - 每帧 progress = i / (totalFrames - 1)，截图落盘为 frame-000001.png ...
  * - 字幕（可选）直接注入页面覆盖层，按 cue 时间显示，保证与预览一致
  */
@@ -70,10 +71,13 @@ export async function renderSceneToPngs(params: RenderSceneParams): Promise<numb
 
       const progress = totalFrames <= 1 ? 1 : i / (totalFrames - 1);
       const t = progress * durationSec;
+      const timeMs = Math.max(0, t * 1000);
 
-      await page.evaluate(p => {
-        window.postMessage({ type: '__ai_video_step_progress', progress: p }, '*');
-      }, progress);
+      // 与前端预览完全对齐：progress 驱动 data-step 淡入，timeMs 把所有 WAAPI/CSS
+      // 动画定格到当前时刻，保证"导出的每一帧 = 预览拖到同一时刻的静态画面"。
+      await page.evaluate(payload => {
+        window.postMessage({ type: '__ai_video_step_progress', ...payload }, '*');
+      }, { progress, timeMs });
 
       if (showSubtitle) {
         const text = cues.find(c => t >= c.startTime && t < c.endTime)?.text ?? '';
