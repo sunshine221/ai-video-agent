@@ -3,8 +3,10 @@
 FROM mcr.microsoft.com/playwright:v1.63.0-jammy AS base
 
 # 让 Playwright 使用镜像内置的浏览器（/ms-playwright），避免再次下载
+# 注意：base 阶段不设 NODE_ENV=production，否则 deps 阶段 npm ci 会跳过
+# devDependencies（typescript / tailwindcss / postcss / prisma CLI 等），导致构建失败。
+# NODE_ENV=production 只在最后的 runner 阶段设置。
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1
 
 WORKDIR /app
@@ -23,7 +25,8 @@ RUN npx prisma generate \
 
 # --- 运行层：仅保留运行所需 ---
 FROM base AS runner
-ENV PORT=3000
+ENV NODE_ENV=production \
+    PORT=3000
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public

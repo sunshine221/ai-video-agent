@@ -39,6 +39,9 @@ next-env.d.ts.bak
 !/data/images/.gitkeep
 !/data/audio/.gitkeep
 
+# 部署时脚本生成的数据库备份
+/backups/
+
 # IDE
 .idea/
 .vscode/

@@ -8,10 +8,10 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-ai_video}
-    # 仅供容器内网访问，不对外暴露 3306（更安全）。
-    # 如需宿主机用客户端连库调试，取消下面两行注释。
-    # ports:
-    #   - '127.0.0.1:3306:3306'
+    # 仅绑定到服务器本地回环（127.0.0.1），公网无法直连 3306。
+    # 远程访问请用 SSH 隧道：ssh -L 13306:127.0.0.1:3306 root@服务器IP -N
+    ports:
+      - '127.0.0.1:3306:3306'
     volumes:
       - mysql_data:/var/lib/mysql
     command:
@@ -28,6 +28,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # 固定镜像名，便于保留上一次镜像用于回滚（见 scripts/deploy.sh、scripts/rollback.sh）
+    image: ai-video-agent:latest
     container_name: ai-video-app
     restart: unless-stopped
     env_file:
