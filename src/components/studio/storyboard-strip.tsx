@@ -1,8 +1,10 @@
 'use client';
 
-import { Volume2, ImageOff, Code2, Play, Loader2 } from 'lucide-react';
+import { useState } from 'react';
+import { Volume2, ImageOff, Code2, Play, Loader2, Pencil } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { HtmlThumb } from './html-thumb';
+import { OutlineDialog } from '@/components/outline/outline-dialog';
 import { useStudioStore } from '@/stores/studio-store';
 import type { ProjectDetail } from '@/types';
 
@@ -13,9 +15,11 @@ interface StoryboardStripProps {
   onFrameSelect: (id: string | null) => void;
 }
 
-export function StoryboardStrip({ project, selectedFrameId, onFrameSelect }: StoryboardStripProps) {
+export function StoryboardStrip({ project, onProjectChange, selectedFrameId, onFrameSelect }: StoryboardStripProps) {
   const generatingFrameId = useStudioStore(s => s.generatingFrameId);
   const generationPhase = useStudioStore(s => s.generationPhase);
+  // 编辑弹窗：点分镜上的铅笔按钮时，打开并展开到该帧、直接进入编辑态
+  const [editFrameId, setEditFrameId] = useState<string | null>(null);
   // ⚠️ 关键：缩略图完全不挂 iframe。AI HTML 可能含无限循环动画，
   // 即使加了 sandbox+看门狗也不够稳。统一用静态占位，主预览区才渲染真实 HTML。
 
@@ -83,24 +87,38 @@ export function StoryboardStrip({ project, selectedFrameId, onFrameSelect }: Sto
                   #{i + 1}
                 </span>
 
-                {/* 喇叭按钮 */}
-                <button
-                  type="button"
-                  onClick={e => {
-                    e.stopPropagation();
-                    if (fs?.audioPath) playFrameAudio(fs.audioPath);
-                  }}
-                  disabled={!hasAudio}
-                  className={cn(
-                    'absolute right-1 top-1 rounded-full p-1 transition-colors',
-                    hasAudio
-                      ? 'bg-orange-500/90 text-white hover:bg-orange-500'
-                      : 'bg-slate-300/80 text-slate-500 cursor-not-allowed',
-                  )}
-                  title={hasAudio ? '播放旁白' : '尚无旁白'}
-                >
-                  <Volume2 className="h-3 w-3" />
-                </button>
+                {/* 右上角操作按钮：编辑 + 播放旁白 */}
+                <div className="absolute right-1 top-1 flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation();
+                      onFrameSelect(f.id);
+                      setEditFrameId(f.id);
+                    }}
+                    className="rounded-full bg-slate-900/70 p-1 text-white opacity-0 transition-opacity hover:bg-slate-900 group-hover:opacity-100"
+                    title="编辑这一镜"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation();
+                      if (fs?.audioPath) playFrameAudio(fs.audioPath);
+                    }}
+                    disabled={!hasAudio}
+                    className={cn(
+                      'rounded-full p-1 transition-colors',
+                      hasAudio
+                        ? 'bg-orange-500/90 text-white hover:bg-orange-500'
+                        : 'bg-slate-300/80 text-slate-500 cursor-not-allowed',
+                    )}
+                    title={hasAudio ? '播放旁白' : '尚无旁白'}
+                  >
+                    <Volume2 className="h-3 w-3" />
+                  </button>
+                </div>
               </div>
 
               {/* 标题 */}
@@ -111,6 +129,16 @@ export function StoryboardStrip({ project, selectedFrameId, onFrameSelect }: Sto
           );
         })}
       </div>
+
+      {/* 分镜编辑弹窗：打开即展开到目标帧并进入编辑态 */}
+      <OutlineDialog
+        open={!!editFrameId}
+        onOpenChange={v => { if (!v) setEditFrameId(null); }}
+        project={project}
+        onProjectChange={onProjectChange}
+        initialFrameId={editFrameId}
+        initialEditing
+      />
     </div>
   );
 }

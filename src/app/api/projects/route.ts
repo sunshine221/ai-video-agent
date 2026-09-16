@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
+import { getCurrentUserId } from '@/lib/session';
+import { newId } from '@/lib/id';
 
 const createSchema = z.object({
   type: z.enum(['image', 'html']),
@@ -12,6 +14,9 @@ const createSchema = z.object({
  */
 export async function POST(req: NextRequest) {
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) return NextResponse.json({ error: '未登录' }, { status: 401 });
+
     const body = await req.json();
     const parsed = createSchema.safeParse(body);
     if (!parsed.success) {
@@ -22,9 +27,11 @@ export async function POST(req: NextRequest) {
 
     const project = await prisma.project.create({
       data: {
+        uuid: newId(),
         title,
         type,
         outline: undefined,
+        userId,
       },
     });
 
@@ -41,7 +48,11 @@ export async function POST(req: NextRequest) {
  */
 export async function GET() {
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) return NextResponse.json({ error: '未登录' }, { status: 401 });
+
     const projects = await prisma.project.findMany({
+      where: { userId },
       orderBy: { createdAt: 'desc' },
       select: {
         uuid: true,

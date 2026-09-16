@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { ProjectList } from './project-list';
 import { PreviewPanel } from './preview-panel';
 import { ChatPanel } from './chat-panel';
+import { UserMenu } from '@/components/common/user-menu';
 import { useStudioStore } from '@/stores/studio-store';
 import type { ProjectDetail, ChatMessage } from '@/types';
 import { env } from '@/lib/env';
@@ -44,6 +45,9 @@ export function StudioLayout({ initialProject, initialMessages }: StudioLayoutPr
           <span className="ml-2 text-xs text-muted-foreground">
             {project.type === 'image' ? '图片轮播模式' : 'HTML 动画模式'}
           </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <UserMenu />
         </div>
       </header>
 

@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ChatMessageBubble } from '@/components/chat/chat-message';
 import { StylePickerDialog } from '@/components/style-picker/style-picker-dialog';
-import type { ProjectDetail, ChatMessage } from '@/types';
+import type { ProjectDetail, ChatMessage, StylePreset } from '@/types';
 
 interface ChatPanelProps {
   project: ProjectDetail;
@@ -21,19 +21,46 @@ interface ChatPanelProps {
 export function ChatPanel({ project, messages, onMessagesChange, onProjectChange }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [stylePickerOpen, setStylePickerOpen] = useState(false);
+  const [styles, setStyles] = useState<StylePreset[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef(messages);
   const qc = useQueryClient();
+
+  // 拉取风格列表，用于在对话框回显当前选中的风格名称
+  useEffect(() => {
+    if (project.type !== 'html') return;
+    fetch('/api/styles')
+      .then(r => r.json())
+      .then(d => setStyles(d.styles || []))
+      .catch(() => {});
+  }, [project.type]);
+
+  // 当前选中风格：无 styleId 时默认「手绘讲故事」
+  const selectedStyle =
+    styles.find(s => s.id === project.styleId) ||
+    styles.find(s => s.slug === 'hand-drawn-story') ||
+    styles[0];
 
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
 
-  // 滚动到底
+  // 滚动到底：每次消息变化（新增、pending 变正式、内容增长）都滚到最新
   useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length]);
+    const root = scrollRef.current;
+    if (!root) return;
+    // Radix ScrollArea 真正可滚动的是内部 viewport，Root 本身 overflow-hidden
+    const viewport = root.querySelector<HTMLElement>(
+      '[data-radix-scroll-area-viewport]',
+    );
+    const el = viewport ?? root;
+    el.scrollTop = el.scrollHeight;
+  }, [messages]);
+
+  // 最新一条大纲消息的 id：只有它显示「一键生成」按钮，历史大纲卡片不再显示
+  const latestOutlineId = [...messages]
+    .reverse()
+    .find(m => m.metadata?.kind === 'outline')?.id;
 
   const sendMut = useMutation({
     mutationFn: async (content: string) => {
@@ -132,6 +159,7 @@ export function ChatPanel({ project, messages, onMessagesChange, onProjectChange
                 message={m}
                 project={project}
                 onProjectChange={onProjectChange}
+                isLatestOutline={m.id === latestOutlineId}
               />
             ))
           )}
@@ -139,7 +167,8 @@ export function ChatPanel({ project, messages, onMessagesChange, onProjectChange
       </ScrollArea>
 
       <div className="flex-shrink-0 border-t bg-white p-3">
-        <div className="relative">
+        {/* 窄面板下按钮组自动换行到输入框下方，避免与输入文字重叠 */}
+        <div className="flex flex-wrap items-end justify-end gap-2">
           <Textarea
             value={input}
             onChange={e => setInput(e.target.value)}
@@ -150,17 +179,21 @@ export function ChatPanel({ project, messages, onMessagesChange, onProjectChange
               }
             }}
             placeholder="输入提示词，⌘/Ctrl+Enter 发送"
-            className="min-h-[60px] resize-none pr-20 text-sm"
+            className="min-h-[60px] min-w-[10rem] flex-1 resize-none text-sm"
           />
-          <div className="absolute bottom-2 right-2 flex items-center gap-1">
+          <div className="flex items-center gap-1">
             {project.type === 'html' && (
               <Button
-                size="icon"
+                size="sm"
                 variant="ghost"
                 onClick={() => setStylePickerOpen(true)}
                 title="选择视觉风格"
+                className="h-8 gap-1.5 px-2 text-xs text-muted-foreground"
               >
-                <Palette className="h-4 w-4" />
+                <Palette className="h-4 w-4 flex-shrink-0" />
+                <span className="max-w-[7rem] truncate">
+                  {selectedStyle?.name ?? '选择风格'}
+                </span>
               </Button>
             )}
             <Button

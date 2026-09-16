@@ -1,5 +1,6 @@
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
+import { parseBuffer } from 'music-metadata';
 import { env } from '@/lib/env';
 
 /**
@@ -194,11 +195,34 @@ async function saveAndReturn(args: {
   const ext = format === 'wav' ? 'wav' : 'mp3';
   const filePath = join(dir, `${frameId}.${ext}`);
   await writeFile(filePath, buf);
-  // 估算时长：中文按 4 字/秒
-  const estimated = Math.max(2, Math.ceil(text.length / 4));
   return {
     url: `/api/data/audio/${projectId}/${frameId}.${ext}`,
-    duration: estimated,
+    duration: await measureAudioDuration(buf, format, text),
     format,
   };
+}
+
+/**
+ * 解析音频真实时长（秒）。
+ * 优先用 music-metadata 读取真实时长，失败时回退到"中文 4 字/秒"估算。
+ * 字幕切片、进度条、帧推进都依赖它，必须尽量精确。
+ */
+async function measureAudioDuration(
+  buf: Buffer,
+  format: 'mp3' | 'wav',
+  text: string,
+): Promise<number> {
+  const estimated = Math.max(2, Math.ceil(text.length / 4));
+  try {
+    const mimeType = format === 'wav' ? 'audio/wav' : 'audio/mpeg';
+    const metadata = await parseBuffer(buf, { mimeType }, { duration: true });
+    const seconds = metadata.format.duration;
+    if (typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0) {
+      // 保留 3 位小数，避免浮点误差累积
+      return Math.round(seconds * 1000) / 1000;
+    }
+  } catch (err) {
+    console.warn('[TTS] 音频时长解析失败，回退到字数估算:', (err as Error).message);
+  }
+  return estimated;
 }

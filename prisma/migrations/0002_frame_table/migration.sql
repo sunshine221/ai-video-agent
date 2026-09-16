@@ -19,10 +19,8 @@ CREATE TABLE IF NOT EXISTS `frame` (
   `updatedAt`      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_frame_project_frameId` (`projectId`, `frameId`),
-  KEY `idx_frame_project_order` (`projectId`, `orderIndex`),
-  CONSTRAINT `fk_frame_project`
-    FOREIGN KEY (`projectId`) REFERENCES `project` (`uuid`)
-    ON DELETE CASCADE ON UPDATE CASCADE
+  -- 逻辑外键：仅建索引，不建物理外键约束，关系由应用层维护
+  KEY `idx_frame_project_order` (`projectId`, `orderIndex`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 2) 从旧的 project.videoSource JSON 迁移数据

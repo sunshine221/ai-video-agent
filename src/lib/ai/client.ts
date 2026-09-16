@@ -61,6 +61,72 @@ export async function callAIJson<T = unknown>(opts: {
   throw lastError instanceof Error ? lastError : new Error('AI 调用失败');
 }
 
+export interface AIToolDef {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>; // JSON Schema
+}
+
+export interface AIToolCallResult {
+  /** 模型选择调用的工具名；为 null 表示没调用任何工具（模型只回了文本） */
+  toolName: string | null;
+  /** 工具入参（已解析）；无工具调用时为空对象 */
+  args: Record<string, unknown>;
+  /** 模型的文本输出（无工具调用时作为兜底内容） */
+  text: string;
+}
+
+/**
+ * Function calling 调用：把一组工具交给模型，让它自己决定调哪个、传什么参数。
+ *
+ * 相比“让模型输出一个 action 字符串”的硬分类，工具调用用模型原生的推理能力去匹配，
+ * 对任意自然语言措辞更鲁棒；模型信息不足时可以选择不调工具、只回文本（走 clarify/unknown 兜底）。
+ */
+export async function callAITool(opts: {
+  system: string;
+  user: string;
+  tools: AIToolDef[];
+  model?: string;
+  temperature?: number;
+}): Promise<AIToolCallResult> {
+  const { system, user, tools, model = DEFAULT_MODEL, temperature = 0.2 } = opts;
+
+  const completion = await aiClient.chat.completions.create({
+    model,
+    temperature,
+    tools: tools.map(t => ({
+      type: 'function' as const,
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+      },
+    })),
+    tool_choice: 'auto',
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    enable_thinking: false,
+  } as any);
+
+  const message = completion.choices[0]?.message;
+  const toolCall = message?.tool_calls?.[0];
+  const text = message?.content || '';
+
+  if (!toolCall || toolCall.type !== 'function') {
+    return { toolName: null, args: {}, text };
+  }
+
+  let args: Record<string, unknown> = {};
+  try {
+    args = toolCall.function.arguments ? JSON.parse(toolCall.function.arguments) : {};
+  } catch {
+    args = {};
+  }
+  return { toolName: toolCall.function.name, args, text };
+}
+
 /**
  * 文本模式调用
  */

@@ -1,3 +1,4 @@
+import { prisma } from '@/lib/db';
 import type { StylePreset } from '@/types';
 
 /**
@@ -455,9 +456,15 @@ const warmStoryDemo = `<!DOCTYPE html>
   </div>
 </body></html>`;
 
-export const STYLE_PRESETS: StylePreset[] = [
+/**
+ * 内置风格种子数据：作为 style_preset 表的初始数据来源（见 prisma/seed.ts）。
+ * 运行时读取一律走数据库（getStyleById/getDefaultStyle/getAllStyles），
+ * 这里只用于 seed 与类型参考，不再被业务代码直接消费。
+ */
+export const STYLE_PRESET_SEEDS: StylePreset[] = [
   {
-    id: 'cyber-clean',
+    id: '1730000000000000001',
+    slug: 'cyber-clean',
     name: '科技博主',
     description: '深色高级感 + 青色霓虹 + 卡片化布局，适合测评、深度讲解、科技分享',
     prompt: `【视觉风格：科技博主（Cyber Clean）】
@@ -498,7 +505,8 @@ export const STYLE_PRESETS: StylePreset[] = [
     demoHtml: cyberCleanDemo,
   },
   {
-    id: 'terminal-matrix',
+    id: '1730000000000000002',
+    slug: 'terminal-matrix',
     name: '黑客风',
     description: '终端控制台 + 霓虹绿 + ASCII 边框 + 闪烁光标，适合技术演示、极客内容',
     prompt: `【视觉风格：黑客风（Terminal Matrix）】
@@ -542,7 +550,8 @@ export const STYLE_PRESETS: StylePreset[] = [
     demoHtml: terminalMatrixDemo,
   },
   {
-    id: 'warm-story',
+    id: '1730000000000000003',
+    slug: 'warm-story',
     name: '暖色系',
     description: '奶油米色 + 暖橘琥珀 + 优雅衬线 + 大量留白，适合 Vlog、生活方式、文化故事',
     prompt: `【视觉风格：暖色系（Warm Story）】
@@ -592,11 +601,52 @@ export const STYLE_PRESETS: StylePreset[] = [
   },
 ];
 
-export function getStyleById(id?: string | null): StylePreset | undefined {
-  if (!id) return undefined;
-  return STYLE_PRESETS.find(s => s.id === id);
+// =============================================================================
+// 运行时读取：一律走数据库（style_preset 表）
+// =============================================================================
+
+/** 全部风格，按 sortOrder 升序（内置在前） */
+export async function getAllStyles(): Promise<StylePreset[]> {
+  const rows = await prisma.stylePreset.findMany({
+    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+  });
+  return rows.map(toStylePreset);
 }
 
-export function getDefaultStyle(): StylePreset {
-  return STYLE_PRESETS[0];
+/** 按 id 查风格；未传或查不到返回 undefined */
+export async function getStyleById(id?: string | null): Promise<StylePreset | undefined> {
+  if (!id) return undefined;
+  const row = await prisma.stylePreset.findUnique({ where: { id } });
+  return row ? toStylePreset(row) : undefined;
+}
+
+/** 默认风格：sortOrder 最小的内置风格 */
+export async function getDefaultStyle(): Promise<StylePreset> {
+  const row = await prisma.stylePreset.findFirst({
+    where: { isBuiltin: true },
+    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+  });
+  if (!row) {
+    // 数据库尚未 seed 时的兜底，避免整条链崩溃
+    return STYLE_PRESET_SEEDS[0];
+  }
+  return toStylePreset(row);
+}
+
+function toStylePreset(row: {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  prompt: string;
+  demoHtml: string;
+}): StylePreset {
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    description: row.description,
+    prompt: row.prompt,
+    demoHtml: row.demoHtml,
+  };
 }

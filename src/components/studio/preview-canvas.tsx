@@ -137,6 +137,7 @@ const PreviewBody = forwardRef<HTMLDivElement, PreviewBodyProps>(function Previe
           frameSource={displayed}
           isPlaying={isPlaying}
           audioRef={audioRef}
+          currentTime={currentTime}
         />
       </div>
 
@@ -154,11 +155,14 @@ function FrameContent({
   frameSource,
   isPlaying,
   audioRef,
+  currentTime,
 }: {
   project: ProjectDetail;
   frameSource: FrameSource;
   isPlaying: boolean;
   audioRef?: React.RefObject<HTMLAudioElement>;
+  /** 当前帧本地播放时间（秒），用于音频驱动 HTML 分步动画 */
+  currentTime?: number;
 }) {
   if (project.type === 'image') {
     return (
@@ -175,6 +179,7 @@ function FrameContent({
       htmlCode={frameSource.htmlCode}
       frameId={frameSource.id}
       frameDuration={frameSource.audioDuration ?? 3}
+      currentTime={currentTime ?? 0}
     />
   );
 }
@@ -253,10 +258,13 @@ function HtmlFrame({
   htmlCode,
   frameId,
   frameDuration,
+  currentTime,
 }: {
   htmlCode?: string;
   frameId?: string;
   frameDuration: number;
+  /** 当前帧本地播放时间（秒），用于音频驱动 HTML 分步动画 */
+  currentTime?: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -283,6 +291,18 @@ function HtmlFrame({
   useEffect(() => {
     setDesignSize(DEFAULT_DESIGN_SIZE);
   }, [frameId, htmlCode]);
+
+  // ⭐ 音频驱动分步（方案 A）：把当前帧本地播放进度（0~1）下发给 iframe，
+  // iframe 据此激活对应 data-step，实现"画面进度 == 音频进度"。
+  useEffect(() => {
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    const dur = Math.max(0.001, frameDuration);
+    let progress = (currentTime ?? 0) / dur;
+    if (progress < 0) progress = 0;
+    if (progress > 1) progress = 1;
+    win.postMessage({ type: '__ai_video_step_progress', progress }, '*');
+  }, [currentTime, frameDuration]);
 
   // ResizeObserver：容器尺寸变化时重新计算 scale + 显式 left/top 居中
   useEffect(() => {

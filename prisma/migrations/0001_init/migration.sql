@@ -30,8 +30,6 @@ CREATE TABLE IF NOT EXISTS `message` (
   `metadata`   JSON         NULL COMMENT '结构化数据：大纲卡片/分镜卡片/进度等',
   `createdAt`  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (`id`),
-  KEY `idx_message_project_createdAt` (`projectId`, `createdAt`),
-  CONSTRAINT `fk_message_project`
-    FOREIGN KEY (`projectId`) REFERENCES `project` (`uuid`)
-    ON DELETE CASCADE ON UPDATE CASCADE
+  -- 逻辑外键：仅建索引，不建物理外键约束，关系由应用层维护
+  KEY `idx_message_project_createdAt` (`projectId`, `createdAt`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

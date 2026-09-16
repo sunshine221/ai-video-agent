@@ -2,10 +2,12 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import { toast } from 'sonner';
-import { Images, Code2, Sparkles, ArrowRight, Loader2 } from 'lucide-react';
+import { Code2, Sparkles, ArrowRight, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { UserMenu } from '@/components/common/user-menu';
 import { env } from '@/lib/env';
 import type { ProjectType } from '@/types';
 
@@ -21,16 +23,17 @@ interface ModeCard {
 }
 
 const modes: ModeCard[] = [
-  {
-    type: 'image',
-    title: '图片轮播模式',
-    subtitle: 'AI 自动生成画面图片',
-    description: 'AI 文生图生成多张高质量图片，配上语音旁白与字幕，快速生成知识讲解类视频。',
-    features: ['文生图 · 多分镜', 'TTS 旁白', '字幕自动同步', '淡入淡出转场'],
-    icon: <Images className="h-7 w-7" />,
-    gradient: 'from-blue-500/10 via-indigo-500/5 to-transparent',
-    iconBg: 'bg-blue-500/10 text-blue-600',
-  },
+  // 图片模式第一版暂不上线，后续迭代完成后再开放
+  // {
+  //   type: 'image',
+  //   title: '图片轮播模式',
+  //   subtitle: 'AI 自动生成画面图片',
+  //   description: 'AI 文生图生成多张高质量图片，配上语音旁白与字幕，快速生成知识讲解类视频。',
+  //   features: ['文生图 · 多分镜', 'TTS 旁白', '字幕自动同步', '淡入淡出转场'],
+  //   icon: <Images className="h-7 w-7" />,
+  //   gradient: 'from-blue-500/10 via-indigo-500/5 to-transparent',
+  //   iconBg: 'bg-blue-500/10 text-blue-600',
+  // },
   {
     type: 'html',
     title: 'HTML 动画模式',
@@ -45,6 +48,7 @@ const modes: ModeCard[] = [
 
 export default function HomePage() {
   const router = useRouter();
+  const { data: session } = useSession();
   const [loading, setLoading] = useState<ProjectType | null>(null);
   const [enteringCenter, setEnteringCenter] = useState(false);
 
@@ -99,6 +103,11 @@ export default function HomePage() {
               <div className="text-xs text-muted-foreground mt-0.5">AI 视频创作一站式</div>
             </div>
           </div>
+          {session?.user && (
+            <div className="flex items-center gap-3">
+              <UserMenu />
+            </div>
+          )}
         </div>
       </header>
 
@@ -139,7 +148,7 @@ export default function HomePage() {
         </div>
 
         {/* Mode Cards */}
-        <div className="mx-auto mt-16 grid max-w-5xl gap-6 md:grid-cols-2">
+        <div className="mx-auto mt-16 grid max-w-md gap-6">
           {modes.map(mode => (
             <Card
               key={mode.type}

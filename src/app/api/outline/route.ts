@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { generateOutline } from '@/lib/ai/outline';
+import { updateBrief } from '@/lib/ai/brief';
 import { syncFramesToOutline } from '@/lib/frames';
+import { assertProjectAccess } from '@/lib/session';
+import type { CreativeBrief } from '@/types';
 
 const schema = z.object({
-  projectId: z.string().uuid(),
+  projectId: z.string().min(1),
   prompt: z.string().min(1).max(4000),
 });
 
@@ -20,13 +23,25 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) return NextResponse.json({ error: '参数错误' }, { status: 400 });
     const { projectId, prompt } = parsed.data;
 
+    const access = await assertProjectAccess(projectId);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? '未登录' : '项目不存在' },
+        { status: access.status },
+      );
+    }
+
     const project = await prisma.project.findUnique({ where: { uuid: projectId } });
     if (!project) return NextResponse.json({ error: '项目不存在' }, { status: 404 });
 
-    const outline = await generateOutline(project.type as 'image' | 'html', prompt);
+    // 先把用户要求合并进创作简报，再从简报派生大纲（唯一事实来源）
+    const currentBrief = (project.brief as unknown as CreativeBrief) ?? null;
+    const brief = await updateBrief(currentBrief, prompt);
+    const outline = await generateOutline(project.type as 'image' | 'html', brief);
     const updated = await prisma.project.update({
       where: { uuid: projectId },
       data: {
+        brief: brief as any,
         outline: outline as any,
         title: outline.title,
       },

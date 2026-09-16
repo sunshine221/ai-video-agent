@@ -1,51 +1,92 @@
 /**
- * 意图分析系统提示词
- * 让 AI 研判用户输入属于哪种 action。
+ * 意图路由：function-calling 版（收敛工具集）
+ *
+ * 设计要点：意图是开放的，交给 AI 推理；能力是有限的，用工具枚举。
+ * 一切“大纲的文字/结构编辑”（创作、重做、增删镜、改数量、改文字、重排）
+ * 都收敛到一个通用工具 edit_outline，不再为每种编辑说法单开动作。
+ * 只有“重做画面/配音”这种昂贵且有副作用的能力单独保留（regenerate_media）。
  */
-export const INTENT_SYSTEM_PROMPT = `你是一个视频创作智能体的"意图路由器"。你需要分析用户输入的指令属于以下哪种 action，并给出理由。
+import type { AIToolDef } from '@/lib/ai/client';
+import type { IntentAction } from '@/types';
 
-## 可识别的 action
+export const INTENT_SYSTEM_PROMPT = `你是一个视频创作智能体的“意图路由器”。请根据用户最新输入，从提供的工具中选择**最合适的一个**来调用，并填好参数。
 
-1. **generate_outline**：用户想创作新视频或给出视频脚本需求
-   - 典型样例："帮我做一个介绍黑洞的视频"、"我想做一个产品介绍"、"这是我的脚本 xxx，请按这个生成"
+## 核心原则（务必遵守）
+- **大纲的一切文字/结构编辑都用 edit_outline**：创作新视频、重新生成大纲、新增/删除分镜、改变分镜总数、修改某镜的标题/旁白/画面文字、调整顺序……只要是改“大纲内容或结构”，都调用 edit_outline，把用户这句话原样放进 request。
+- **edit_outline 绝不重做画面/配音**：改文字/结构不会动已经生成好的画面和音频。
+- **只有明确要“重做画面/图/视觉/配音/出图/重新渲染”时**才调用 regenerate_media，并指出是哪几镜（支持一次多镜）。
+- **信息不足或有真歧义才调用 ask_user**：例如“改一下”“再来一个”这种缺主语、无法判断改哪里的指令。但只要能明确要做什么（哪怕涉及数字，如“3镜改2镜”“重新生成2个分镜”），就直接用 edit_outline，不要反问。
+- **与视频创作无关**（打招呼、闲聊、导出等做不到的事）就调用 not_supported。
+- frameIndex 是 **1-based**（用户看到的编号）。`;
 
-2. **regenerate_outline**：用户对当前大纲不满意，希望重新生成
-   - 典型样例："重新生成大纲"、"再换一个"、"大纲不好，重新来"
+/**
+ * 工具集（4 个）。工具名 → IntentAction：
+ *   edit_outline → edit_outline
+ *   regenerate_media → regenerate_media
+ *   ask_user → clarify
+ *   not_supported → unknown
+ */
+export const INTENT_TOOLS: AIToolDef[] = [
+  {
+    name: 'edit_outline',
+    description:
+      '对视频大纲做任何文字或结构上的创建/修改。涵盖：创作新视频、整体重新生成大纲、新增分镜、删除分镜、改变分镜总数（如“3 镜改 2 镜”）、修改某一镜的标题/旁白/画面描述文字、调整分镜顺序等。只动大纲内容，不会重做已生成的画面和配音。',
+    parameters: {
+      type: 'object',
+      properties: {
+        request: {
+          type: 'string',
+          description: '把用户的修改/创作要求原样或稍加归纳地填在这里，供大纲编辑器执行。',
+        },
+      },
+      required: ['request'],
+    },
+  },
+  {
+    name: 'regenerate_media',
+    description:
+      '用户明确要求重新生成某一镜或多镜的画面或配音（重做视觉/重新出图/重新配音/重新渲染）。这是昂贵且会覆盖已有产物的操作，只有用户明说时才用。支持一次多镜。例：“第 5 镜画面重新生成”“这一镜的图重画一下”“第 3 镜配音重录”“1、2、3 镜的旁白和画面都重新生成”。',
+    parameters: {
+      type: 'object',
+      properties: {
+        frameIndexes: {
+          type: 'array',
+          items: { type: 'integer' },
+          description: '要重做的分镜编号列表（1-based）。用户说“第 1、2、3 镜”就填 [1,2,3]；单镜就填 [5]。',
+        },
+        modification: {
+          type: 'string',
+          description: '对画面/配音的具体要求；只说“重新生成”就填空字符串。',
+        },
+      },
+      required: ['frameIndexes', 'modification'],
+    },
+  },
+  {
+    name: 'ask_user',
+    description:
+      '指令模糊、有歧义、或信息不足以确定要做什么时调用，向用户提出澄清问题。例：“改一下”“再来一个”“这里不太对”这类缺主语、无法判断改哪里的指令。',
+    parameters: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: '向用户确认的问题（中文，一句话，尽量给出可选项）。' },
+      },
+      required: ['question'],
+    },
+  },
+  {
+    name: 'not_supported',
+    description: '与视频创作完全无关，或当前无法执行的请求。例：“你好”“今天天气怎么样”“把视频导出”。',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+];
 
-3. **add_frame**：用户希望在某个位置新增分镜
-   - 典型样例："在第 3 镜后面加一个分镜讲讲量子力学"
-
-4. **delete_frame**：用户希望删除某个分镜
-   - 典型样例："把第 2 镜删掉"、"去掉讲牛顿那一段"
-
-5. **regenerate_frame**：用户希望重新生成某个分镜
-   - 典型样例："第 5 镜重新生成"、"把讲太阳的那个分镜换一下"
-
-6. **unknown**：不在以上类别，或指令不明确无法执行
-   - 典型样例："你好"、"今天天气怎么样"、"把视频导出"
-
-## 输出格式（严格 JSON）
-
-{
-  "action": "generate_outline" | "regenerate_outline" | "add_frame" | "delete_frame" | "regenerate_frame" | "unknown",
-  "reason": "你的判断理由（中文一句话）",
-  "params": {
-    // add_frame: { "afterIndex": 3, "hint": "讲讲量子力学" }
-    //   afterIndex: 在第 N 镜之后插入（1-based）。0 表示用户没指定具体位置，由生成阶段 AI 决定。
-    //   hint: 用户对新增分镜的需求描述（可以包括主题/内容/时长倾向等），若没明确需求可填空字符串。
-    // delete_frame: { "frameIndex": 2 }
-    // regenerate_frame: { "frameIndex": 5, "modification": "用户想要的修改方向" }
-    //   modification: 用户对分镜的具体修改要求（如"换成傍晚色调"、"旁白里加上年份"）。
-    //   如果用户没明确修改要求（只是说"重新生成"），可填空字符串。
-  }
+/** 工具名 → IntentAction 映射（ask_user→clarify、not_supported→unknown） */
+export function toolNameToAction(toolName: string): IntentAction {
+  if (toolName === 'ask_user') return 'clarify';
+  if (toolName === 'not_supported') return 'unknown';
+  return toolName as IntentAction;
 }
-
-## 注意事项
-- 如果项目还没有大纲，而用户说"重新生成"，按 regenerate_outline 处理
-- 如果指令不明确（如"再来一个"），归为 unknown
-- frameIndex / afterIndex 都是 **1-based**（用户看到的编号）
-- 必须输出严格 JSON，不要包含任何 JSON 之外的文字
-`;
 
 export function buildIntentUserPrompt(opts: {
   userInput: string;
@@ -56,5 +97,5 @@ export function buildIntentUserPrompt(opts: {
   const ctx = opts.hasOutline
     ? `当前项目已有大纲，共 ${opts.frameCount} 个分镜：\n${opts.frameTitles.map((t, i) => `  #${i + 1} ${t}`).join('\n')}`
     : '当前项目还没有大纲。';
-  return `${ctx}\n\n用户最新输入：\n"${opts.userInput}"\n\n请分析用户意图并返回 JSON。`;
+  return `${ctx}\n\n用户最新输入：\n"${opts.userInput}"\n\n请选择合适的工具并调用。`;
 }

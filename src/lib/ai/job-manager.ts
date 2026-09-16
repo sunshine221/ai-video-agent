@@ -10,7 +10,7 @@
  * 依赖 Node 运行时（非 edge）：模块级 Map 持有任务引用，保证请求返回后后台 Promise 继续执行。
  */
 
-type Kind = 'image' | 'html';
+type Kind = 'image' | 'html' | 'export';
 
 export interface JobEvent {
   event: string;

@@ -1,14 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { STYLE_PRESETS, getStyleById, getDefaultStyle } from '@/lib/styles/presets';
+import { STYLE_PRESET_SEEDS } from '@/lib/styles/presets';
 
-describe('STYLE_PRESETS', () => {
-  it('正好 3 套风格', () => {
-    expect(STYLE_PRESETS).toHaveLength(3);
+// 运行时读取（getStyleById/getDefaultStyle/getAllStyles）已改为查数据库，
+// 这里只对种子数据（style_preset 表的初始来源）做纯数据校验，无需 DB 连接。
+describe('STYLE_PRESET_SEEDS', () => {
+  it('正好 3 套内置风格', () => {
+    expect(STYLE_PRESET_SEEDS).toHaveLength(3);
   });
 
-  it('每套风格都有 id、name、prompt、demoHtml', () => {
-    STYLE_PRESETS.forEach(s => {
+  it('每套风格都有 id、slug、name、description、prompt、demoHtml', () => {
+    STYLE_PRESET_SEEDS.forEach(s => {
       expect(s.id).toBeTruthy();
+      expect(s.slug).toBeTruthy();
       expect(s.name).toBeTruthy();
       expect(s.description).toBeTruthy();
       expect(s.prompt).toBeTruthy();
@@ -16,28 +19,17 @@ describe('STYLE_PRESETS', () => {
     });
   });
 
-  it('id 唯一', () => {
-    const ids = STYLE_PRESETS.map(s => s.id);
+  it('id、slug 均唯一', () => {
+    const ids = STYLE_PRESET_SEEDS.map(s => s.id);
     expect(new Set(ids).size).toBe(ids.length);
-  });
-});
-
-describe('getStyleById', () => {
-  it('能查到已有风格', () => {
-    expect(getStyleById('cyber-clean')?.name).toBe('科技博主');
-    expect(getStyleById('terminal-matrix')?.name).toBe('黑客风');
-    expect(getStyleById('warm-story')?.name).toBe('暖色系');
+    const slugs = STYLE_PRESET_SEEDS.map(s => s.slug);
+    expect(new Set(slugs).size).toBe(slugs.length);
   });
 
-  it('未传或未知 id 返回 undefined', () => {
-    expect(getStyleById()).toBeUndefined();
-    expect(getStyleById(null)).toBeUndefined();
-    expect(getStyleById('not-exist')).toBeUndefined();
-  });
-});
-
-describe('getDefaultStyle', () => {
-  it('返回第一套', () => {
-    expect(getDefaultStyle().id).toBe(STYLE_PRESETS[0].id);
+  it('包含预期的三套内置风格', () => {
+    const bySlug = Object.fromEntries(STYLE_PRESET_SEEDS.map(s => [s.slug, s.name]));
+    expect(bySlug['cyber-clean']).toBe('科技博主');
+    expect(bySlug['terminal-matrix']).toBe('黑客风');
+    expect(bySlug['warm-story']).toBe('暖色系');
   });
 });

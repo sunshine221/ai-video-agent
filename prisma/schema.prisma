@@ -6,8 +6,9 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
-  url      = env("DATABASE_URL")
+  provider     = "mysql"
+  url          = env("DATABASE_URL")
+  relationMode = "prisma"
 }
 
 model User {
@@ -23,10 +24,11 @@ model User {
 }
 
 model Project {
-  uuid      String    @id @default(uuid())
+  uuid      String    @id // 雪花 ID，应用层生成
   title     String
   type      String // "image" | "html"
   styleId   String? // HTML 模式选中的视觉风格 id
+  brief     Json? // 创作简报（唯一事实来源）：{topic, durationSec?, targetFrameCount?, tone?, constraints[]}
   outline   Json? // 视频大纲：{title, totalDuration, globalStyle?, frames: [...]}
   userId    String? // 归属用户；旧项目可能为空
   createdAt DateTime  @default(now())
@@ -59,7 +61,7 @@ model Frame {
 }
 
 model Message {
-  id        String   @id @default(uuid())
+  id        String   @id // 雪花 ID，应用层生成
   projectId String
   role      String // "user" | "assistant"
   content   String   @db.Text
@@ -69,4 +71,21 @@ model Message {
 
   @@index([projectId, createdAt])
   @@map("message")
+}
+
+model StylePreset {
+  id          String   @id // 雪花 ID，应用层生成
+  slug        String   @unique // 业务 slug，如 "cyber-clean"
+  name        String
+  description String   @db.Text
+  prompt      String   @db.Text // 拼接到 HTML 动画生成 prompt 的风格描述
+  demoHtml    String   @db.LongText // 风格选择弹窗的演示 HTML
+  userId      String? // null = 系统内置；有值 = 用户私有（为将来自定义风格预留）
+  isBuiltin   Boolean  @default(true)
+  sortOrder   Int      @default(0) // 展示排序，越小越靠前
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@map("style_preset")
 }

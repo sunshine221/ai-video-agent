@@ -3,6 +3,7 @@ import { createReadStream, statSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { join, normalize, resolve } from 'path';
 import { Readable } from 'stream';
+import { getCurrentUserId } from '@/lib/session';
 
 interface RouteContext {
   params: { path: string[] };
@@ -25,10 +26,14 @@ const MIME: Record<string, string> = {
   '.wav': 'audio/wav',
   '.m4a': 'audio/mp4',
   '.ogg': 'audio/ogg',
+  '.mp4': 'video/mp4',
 };
 
 export async function GET(_req: NextRequest, { params }: RouteContext) {
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) return NextResponse.json({ error: '未登录' }, { status: 401 });
+
     const rel = params.path.join('/');
     const fullPath = normalize(join(DATA_ROOT, rel));
     if (!fullPath.startsWith(DATA_ROOT)) {

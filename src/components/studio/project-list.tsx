@@ -68,7 +68,8 @@ export function ProjectList() {
         <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
           新建项目
         </div>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 gap-2">
+          {/* 图片模式第一版暂不上线，后续迭代完成后再开放
           <Button
             variant="outline"
             size="sm"
@@ -83,6 +84,7 @@ export function ProjectList() {
             )}
             <span className="text-xs">图片模式</span>
           </Button>
+          */}
           <Button
             variant="outline"
             size="sm"

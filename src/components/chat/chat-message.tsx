@@ -12,13 +12,17 @@ interface ChatMessageBubbleProps {
   message: ChatMessage;
   project: ProjectDetail;
   onProjectChange: (p: ProjectDetail) => void;
+  /** 是否为最新的大纲消息：只有最新大纲卡片显示「一键生成」按钮 */
+  isLatestOutline?: boolean;
 }
 
-export function ChatMessageBubble({ message, project, onProjectChange }: ChatMessageBubbleProps) {
+export function ChatMessageBubble({ message, project, onProjectChange, isLatestOutline }: ChatMessageBubbleProps) {
   const isUser = message.role === 'user';
+  // 卡片类消息（大纲等）需要占满可用宽度并由内部自行截断，避免窄面板下溢出
+  const isCard = message.metadata?.kind === 'outline';
 
   return (
-    <div className={cn('flex w-full gap-2', isUser ? 'flex-row-reverse' : 'flex-row')}>
+    <div className={cn('flex w-full min-w-0 gap-2', isUser ? 'flex-row-reverse' : 'flex-row')}>
       <div
         className={cn(
           'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full',
@@ -27,13 +31,20 @@ export function ChatMessageBubble({ message, project, onProjectChange }: ChatMes
       >
         {isUser ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
       </div>
-      <div className={cn('flex max-w-[85%] flex-col', isUser ? 'items-end' : 'items-start')}>
+      <div
+        className={cn(
+          'flex min-w-0 flex-col',
+          isUser ? 'items-end' : 'items-start',
+          isCard ? 'w-full max-w-md' : 'max-w-[85%]',
+        )}
+      >
         <div
           className={cn(
             'rounded-2xl px-3 py-2 text-sm shadow-sm',
             isUser
               ? 'rounded-tr-sm bg-slate-100 text-slate-900'
               : 'rounded-tl-sm border bg-white',
+            isCard ? 'w-full min-w-0' : 'max-w-full min-w-0',
           )}
         >
           {/* 大纲卡片 */}
@@ -42,6 +53,7 @@ export function ChatMessageBubble({ message, project, onProjectChange }: ChatMes
               outline={message.metadata.outline}
               project={project}
               onProjectChange={onProjectChange}
+              showGenerate={isLatestOutline}
             />
           )}
 

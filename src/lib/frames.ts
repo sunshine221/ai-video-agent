@@ -9,6 +9,7 @@
  */
 
 import { prisma } from '@/lib/db';
+import { newId } from '@/lib/id';
 import type { Outline, VideoSource, FrameSource } from '@/types';
 
 /** 单帧可写字段 */
@@ -71,7 +72,7 @@ export async function upsertFrame(
 
   await prisma.frame.upsert({
     where: { projectId_frameId: { projectId, frameId } },
-    create: { projectId, frameId, orderIndex, ...data },
+    create: { id: newId(), projectId, frameId, orderIndex, ...data },
     update: { ...data, orderIndex },
   });
 }

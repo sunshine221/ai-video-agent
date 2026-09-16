@@ -1,14 +1,19 @@
 import type { Metadata } from 'next';
-import { Inter, Noto_Sans_SC } from 'next/font/google';
+import localFont from 'next/font/local';
 import { Toaster } from 'sonner';
 import { Providers } from '@/components/providers';
 import './globals.css';
 
-const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
-const notoSC = Noto_Sans_SC({
-  subsets: ['latin'],
-  weight: ['400', '500', '700'],
-  variable: '--font-noto-sc',
+// 使用本地字体文件，避免构建时依赖网络下载 Google 字体导致启动卡顿/失败
+const inter = localFont({
+  src: [
+    { path: './fonts/Inter-Regular.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/Inter-Medium.woff2', weight: '500', style: 'normal' },
+    { path: './fonts/Inter-Bold.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-inter',
+  display: 'swap',
+  fallback: ['system-ui', 'sans-serif'],
 });
 
 export const metadata: Metadata = {
@@ -18,7 +23,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-CN" className={`${inter.variable} ${notoSC.variable}`}>
+    <html lang="zh-CN" className={inter.variable}>
       <body className="font-sans antialiased" suppressHydrationWarning>
         <Providers>
           {children}

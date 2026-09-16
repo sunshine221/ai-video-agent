@@ -39,14 +39,56 @@ export function wrapHtmlWithWatchdog(innerHtml: string, watchdogMs = WATCHDOG_DE
     transition: none !important;
     animation-play-state: paused !important;
   }
+  /* ⭐ 音频驱动分步：带 data-step 的元素默认隐藏，按音频播放进度逐步激活淡入 */
+  [data-step] { opacity: 0; transition: opacity .45s ease; }
+  [data-step].ai-step-active { opacity: 1; }
 </style>
 ${extracted.head}
 <script>
   (function() {
     var WATCHDOG_MS = ${watchdogMs};
+    var setTimeoutOrig = window.setTimeout;
+
+    // ===== ⭐ 音频驱动分步（方案 A）=====
+    // 父窗口按音频真实播放进度，通过 postMessage 下发进度，iframe 据此激活对应 step。
+    // 这样"画面进度 == 音频进度"，彻底解决画面/音频不同步、动画过早演完的问题。
+    var stepEls = [];        // 所有带 data-step 的元素，按 step 升序
+    var maxStep = -1;        // 最大 step 序号
+    var hasSteps = false;    // 本帧 HTML 是否采用了分步协议
+    function collectSteps() {
+      var nodes = document.querySelectorAll('[data-step]');
+      stepEls = Array.prototype.slice.call(nodes);
+      maxStep = -1;
+      for (var i = 0; i < stepEls.length; i++) {
+        var s = parseInt(stepEls[i].getAttribute('data-step'), 10);
+        if (!isNaN(s) && s > maxStep) maxStep = s;
+      }
+      hasSteps = stepEls.length > 0;
+    }
+    // 根据播放进度 p（0~1）激活到对应 step：step <= floor(p*(maxStep+1)) 的都显示
+    function applyProgress(p) {
+      if (!hasSteps) return;
+      if (p < 0) p = 0; if (p > 1) p = 1;
+      // 把 [0,1] 均匀切成 (maxStep+1) 段，进度落在第几段就显示到第几步
+      var activeUpTo = Math.min(maxStep, Math.floor(p * (maxStep + 1) + 1e-6));
+      for (var i = 0; i < stepEls.length; i++) {
+        var s = parseInt(stepEls[i].getAttribute('data-step'), 10);
+        if (isNaN(s)) continue;
+        if (s <= activeUpTo) stepEls[i].classList.add('ai-step-active');
+        else stepEls[i].classList.remove('ai-step-active');
+      }
+    }
+    window.addEventListener('message', function(e) {
+      var d = e.data;
+      if (!d || d.type !== '__ai_video_step_progress') return;
+      applyProgress(typeof d.progress === 'number' ? d.progress : 0);
+    });
+
+    // ===== 看门狗：仅对"未采用分步协议"的旧 HTML 生效 =====
+    // 分步 HTML 由音频进度驱动、无需自计时动画，不能被冻结。
     var frozen = false;
     function freeze() {
-      if (frozen) return;
+      if (frozen || hasSteps) return;
       frozen = true;
       try {
         // 1) 停所有 CSS 动画
@@ -67,7 +109,6 @@ ${extracted.head}
         for (var i = 1; i < 99999; i++) { clearInterval(i); clearTimeout(i); }
       } catch (e) {}
     }
-    var setTimeoutOrig = window.setTimeout;
     setTimeoutOrig(freeze, WATCHDOG_MS);
 
     // ⭐ 把内容"设计尺寸"上报给父窗口（父窗口用这个来计算 transform: scale）
@@ -95,11 +136,20 @@ ${extracted.head}
     setTimeoutOrig(reportSize, 200);
     setTimeoutOrig(reportSize, 500);
     setTimeoutOrig(reportSize, 1000);
+
+    // 收集分步元素并激活第 0 步（首屏立即可见，不必等父窗口第一条进度）
+    function initSteps() {
+      collectSteps();
+      if (hasSteps) applyProgress(0);
+    }
     if (document.readyState === 'complete') {
       reportSize();
+      initSteps();
     } else {
-      window.addEventListener('load', reportSize);
+      window.addEventListener('load', function() { reportSize(); initSteps(); });
     }
+    // DOM 早于 load 就绪时也尽早收集一次
+    setTimeoutOrig(initSteps, 60);
   })();
 </script>
 </head>

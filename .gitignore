@@ -31,6 +31,9 @@ yarn-error.log*
 next-env.d.ts.bak
 
 # data
+/data/*
+!/data/images/
+!/data/audio/
 /data/images/*
 /data/audio/*
 !/data/images/.gitkeep

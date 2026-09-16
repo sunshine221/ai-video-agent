@@ -3,10 +3,11 @@ import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { generateAndSaveTTS } from '@/lib/ai/tts';
 import { upsertFrame } from '@/lib/frames';
+import { assertProjectAccess } from '@/lib/session';
 import type { Outline } from '@/types';
 
 const schema = z.object({
-  projectId: z.string().uuid(),
+  projectId: z.string().min(1),
   frameId: z.string().min(1),
   regen: z.boolean().optional(),
 });
@@ -21,6 +22,14 @@ export async function POST(req: NextRequest) {
     const parsed = schema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ error: '参数错误' }, { status: 400 });
     const { projectId, frameId } = parsed.data;
+
+    const access = await assertProjectAccess(projectId);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? '未登录' : '项目不存在' },
+        { status: access.status },
+      );
+    }
 
     const project = await prisma.project.findUnique({ where: { uuid: projectId } });
     if (!project || !project.outline) {

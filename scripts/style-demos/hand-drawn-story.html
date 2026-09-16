@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>手绘讲故事风格</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { width: 100%; height: 100%; }
+        body {
+            background-color: #f4f1ea; /* 纸张米色 */
+            overflow: hidden;
+            position: relative;
+            font-family: 'Comic Sans MS', cursive, sans-serif;
+        }
+        /* 纸张质感：极淡的斜向纤维 */
+        body::before {
+            content: '';
+            position: absolute; inset: 0;
+            background-image: repeating-linear-gradient(115deg, rgba(44, 44, 44, 0.025) 0 1px, transparent 1px 7px);
+            pointer-events: none;
+        }
+        svg.stage { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+        /* 线条：纯黑描边，无填充 */
+        .ink {
+            fill: none;
+            stroke: #2c2c2c;
+            stroke-width: 5;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            stroke-dasharray: 1;
+            stroke-dashoffset: 1;
+        }
+        .ink.thin { stroke-width: 4; }
+
+        /* 12s 主循环：每一笔在自己的时间窗内由 0 画到 1（pathLength="1"） */
+        .s1 { animation: d1 12s linear infinite; }
+        .s2 { animation: d2 12s linear infinite; }
+        .s3 { animation: d3 12s linear infinite; }
+        .s4 { animation: d4 12s linear infinite; }
+        .s5 { animation: d5 12s linear infinite; }
+        .s6 { animation: d6 12s linear infinite; }
+        .s7 { animation: d7 12s linear infinite; }
+
+        @keyframes d1 { 0%, 3% { stroke-dashoffset: 1; } 16%, 100% { stroke-dashoffset: 0; } }
+        @keyframes d2 { 0%, 17% { stroke-dashoffset: 1; } 23%, 100% { stroke-dashoffset: 0; } }
+        @keyframes d3 { 0%, 24% { stroke-dashoffset: 1; } 38%, 100% { stroke-dashoffset: 0; } }
+        @keyframes d4 { 0%, 39% { stroke-dashoffset: 1; } 54%, 100% { stroke-dashoffset: 0; } }
+        @keyframes d5 { 0%, 55% { stroke-dashoffset: 1; } 68%, 100% { stroke-dashoffset: 0; } }
+        @keyframes d6 { 0%, 69% { stroke-dashoffset: 1; } 75%, 100% { stroke-dashoffset: 0; } }
+        @keyframes d7 { 0%, 76% { stroke-dashoffset: 1; } 82%, 100% { stroke-dashoffset: 0; } }
+
+        /* 手写标题在收尾时浮现 */
+        .caption { opacity: 0; animation: cap 12s linear infinite; }
+        @keyframes cap { 0%, 82% { opacity: 0; } 88%, 100% { opacity: 1; } }
+
+        /* 整幅画完成后停顿，再淡出重画 */
+        .scene { animation: sceneFade 12s linear infinite; }
+        @keyframes sceneFade { 0%, 92% { opacity: 1; } 97%, 100% { opacity: 0; } }
+
+        /* 手的显隐窗口（位置由 SMIL animateMotion 沿笔迹驱动） */
+        .hand { opacity: 0; }
+        .h1 { animation: a1 12s linear infinite; }
+        .h2 { animation: a2 12s linear infinite; }
+        .h3 { animation: a3 12s linear infinite; }
+        .h4 { animation: a4 12s linear infinite; }
+        .h5 { animation: a5 12s linear infinite; }
+        .h6 { animation: a6 12s linear infinite; }
+        .h7 { animation: a7 12s linear infinite; }
+
+        @keyframes a1 { 0%, 2% { opacity: 0; } 3%, 16% { opacity: 1; } 18%, 100% { opacity: 0; } }
+        @keyframes a2 { 0%, 16% { opacity: 0; } 17%, 23% { opacity: 1; } 25%, 100% { opacity: 0; } }
+        @keyframes a3 { 0%, 23% { opacity: 0; } 24%, 38% { opacity: 1; } 40%, 100% { opacity: 0; } }
+        @keyframes a4 { 0%, 38% { opacity: 0; } 39%, 54% { opacity: 1; } 56%, 100% { opacity: 0; } }
+        @keyframes a5 { 0%, 54% { opacity: 0; } 55%, 68% { opacity: 1; } 70%, 100% { opacity: 0; } }
+        @keyframes a6 { 0%, 68% { opacity: 0; } 69%, 75% { opacity: 1; } 77%, 100% { opacity: 0; } }
+        @keyframes a7 { 0%, 75% { opacity: 0; } 76%, 82% { opacity: 1; } 84%, 100% { opacity: 0; } }
+    </style>
+</head>
+<body>
+    <svg class="stage" viewBox="0 0 1280 720" preserveAspectRatio="xMidYMid meet">
+        <g class="scene">
+            <!-- 1. 船体 -->
+            <path id="p1" class="ink s1" pathLength="1"
+                  d="M430,468 L830,468 L770,540 Q630,566 490,540 Z" />
+            <!-- 2. 桅杆 -->
+            <path id="p2" class="ink s2" pathLength="1"
+                  d="M630,468 L630,170" />
+            <!-- 3. 主帆 + 前帆（三角帆） -->
+            <path id="p3" class="ink s3" pathLength="1"
+                  d="M646,236 L646,452 L838,452 Z M614,262 L614,452 L474,452 Z" />
+            <!-- 4. 海浪（船体处留白） -->
+            <path id="p4" class="ink thin s4" pathLength="1"
+                  d="M180,540 q45,-28 90,0 t90,0 t90,0
+                     M800,540 q45,-28 90,0 t90,0 t90,0
+                     M220,606 q45,-26 90,0 t90,0 t90,0 t90,0 t90,0 t90,0 t90,0 t90,0 t90,0" />
+            <!-- 5. 太阳（圆 + 光芒） -->
+            <path id="p5" class="ink s5" pathLength="1"
+                  d="M1050,98 A62,62 0 1,1 1049.9,98
+                     M1050,72 L1050,48 M1050,248 L1050,272 M962,160 L938,160 M1138,160 L1162,160
+                     M988,98 L971,81 M1112,222 L1129,239 M988,222 L971,239 M1112,98 L1129,81" />
+            <!-- 6. 旗帜 -->
+            <path id="p6" class="ink thin s6" pathLength="1"
+                  d="M630,170 L724,192 L630,214" />
+            <!-- 7. 远处海鸥 -->
+            <path id="p7" class="ink thin s7" pathLength="1"
+                  d="M850,320 q20,-18 40,0 q20,-18 40,0 M944,268 q16,-14 32,0 q16,-14 32,0" />
+
+            <!-- 手写标题 -->
+            <g class="caption">
+                <text x="118" y="118" font-size="52" fill="#2c2c2c">小船的远航</text>
+                <text x="122" y="168" font-size="26" fill="#5a5348">海风轻轻吹，船儿慢慢走……</text>
+            </g>
+        </g>
+
+        <!-- 执笔的手：沿各自笔迹移动（keyPoints 把移动限制在该笔的时间窗内） -->
+        <g class="hand h1">
+            <use href="#handArt" />
+            <animateMotion dur="12s" repeatCount="indefinite" calcMode="linear"
+                           keyPoints="0;0;1;1" keyTimes="0;0.03;0.16;1"
+                           path="M430,468 L830,468 L770,540 Q630,566 490,540 Z" />
+        </g>
+        <g class="hand h2">
+            <use href="#handArt" />
+            <animateMotion dur="12s" repeatCount="indefinite" calcMode="linear"
+                           keyPoints="0;0;1;1" keyTimes="0;0.17;0.23;1"
+                           path="M630,468 L630,170" />
+        </g>
+        <g class="hand h3">
+            <use href="#handArt" />
+            <animateMotion dur="12s" repeatCount="indefinite" calcMode="linear"
+                           keyPoints="0;0;1;1" keyTimes="0;0.24;0.38;1"
+                           path="M646,236 L646,452 L838,452 Z M614,262 L614,452 L474,452 Z" />
+        </g>
+        <g class="hand h4">
+            <use href="#handArt" />
+            <animateMotion dur="12s" repeatCount="indefinite" calcMode="linear"
+                           keyPoints="0;0;1;1" keyTimes="0;0.39;0.54;1"
+                           path="M180,540 q45,-28 90,0 t90,0 t90,0 M800,540 q45,-28 90,0 t90,0 t90,0 M220,606 q45,-26 90,0 t90,0 t90,0 t90,0 t90,0 t90,0 t90,0 t90,0 t90,0" />
+        </g>
+        <g class="hand h5">
+            <use href="#handArt" />
+            <animateMotion dur="12s" repeatCount="indefinite" calcMode="linear"
+                           keyPoints="0;0;1;1" keyTimes="0;0.55;0.68;1"
+                           path="M1050,98 A62,62 0 1,1 1049.9,98 M1050,72 L1050,48 M1050,248 L1050,272 M962,160 L938,160 M1138,160 L1162,160 M988,98 L971,81 M1112,222 L1129,239 M988,222 L971,239 M1112,98 L1129,81" />
+        </g>
+        <g class="hand h6">
+            <use href="#handArt" />
+            <animateMotion dur="12s" repeatCount="indefinite" calcMode="linear"
+                           keyPoints="0;0;1;1" keyTimes="0;0.69;0.75;1"
+                           path="M630,170 L724,192 L630,214" />
+        </g>
+        <g class="hand h7">
+            <use href="#handArt" />
+            <animateMotion dur="12s" repeatCount="indefinite" calcMode="linear"
+                           keyPoints="0;0;1;1" keyTimes="0;0.76;0.82;1"
+                           path="M850,320 q20,-18 40,0 q20,-18 40,0 M944,268 q16,-14 32,0 q16,-14 32,0" />
+        </g>
+
+        <!-- 手 + 铅笔的简笔画（笔尖位于原点，动画时被平移到笔迹上） -->
+        <defs>
+            <g id="handArt">
+                <path d="M0,0 L26,-36" stroke="#2c2c2c" stroke-width="16" stroke-linecap="round" fill="none" />
+                <path d="M22,-31 L84,-116" stroke="#2c2c2c" stroke-width="12" stroke-linecap="round" fill="none" />
+                <path d="M78,-108 L96,-132" stroke="#2c2c2c" stroke-width="12" stroke-linecap="round" fill="none" />
+                <circle cx="104" cy="-104" r="46" fill="#f4f1ea" stroke="#2c2c2c" stroke-width="5" />
+                <path d="M68,-124 q36,-12 66,6" fill="none" stroke="#2c2c2c" stroke-width="4" stroke-linecap="round" />
+                <path d="M64,-104 q38,-10 70,6" fill="none" stroke="#2c2c2c" stroke-width="4" stroke-linecap="round" />
+                <path d="M70,-84 q32,-8 60,6" fill="none" stroke="#2c2c2c" stroke-width="4" stroke-linecap="round" />
+                <path d="M74,-138 q-14,-24 8,-36 q22,-12 34,8" fill="none" stroke="#2c2c2c" stroke-width="5" stroke-linecap="round" />
+                <path d="M134,-72 q34,26 46,64" fill="none" stroke="#2c2c2c" stroke-width="5" stroke-linecap="round" />
+                <path d="M150,-104 q40,26 54,64" fill="none" stroke="#2c2c2c" stroke-width="5" stroke-linecap="round" />
+                <path d="M176,-8 l28,-14" fill="none" stroke="#2c2c2c" stroke-width="5" stroke-linecap="round" />
+            </g>
+        </defs>
+    </svg>
+</body>
+</html>

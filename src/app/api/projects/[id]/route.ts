@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { getVideoSource, syncFramesToOutline } from '@/lib/frames';
+import { assertProjectAccess } from '@/lib/session';
 import type { Outline } from '@/types';
 
 interface RouteContext {
@@ -13,6 +14,14 @@ interface RouteContext {
  */
 export async function GET(_req: NextRequest, { params }: RouteContext) {
   try {
+    const access = await assertProjectAccess(params.id);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? '未登录' : '项目不存在' },
+        { status: access.status },
+      );
+    }
+
     const project = await prisma.project.findUnique({
       where: { uuid: params.id },
       include: { messages: { orderBy: { createdAt: 'asc' } } },
@@ -55,6 +64,14 @@ const patchSchema = z.object({
  */
 export async function PATCH(req: NextRequest, { params }: RouteContext) {
   try {
+    const access = await assertProjectAccess(params.id);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? '未登录' : '项目不存在' },
+        { status: access.status },
+      );
+    }
+
     const body = await req.json();
     const parsed = patchSchema.safeParse(body);
     if (!parsed.success) {
@@ -80,6 +97,14 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
  */
 export async function DELETE(_req: NextRequest, { params }: RouteContext) {
   try {
+    const access = await assertProjectAccess(params.id);
+    if (!access.ok) {
+      return NextResponse.json(
+        { error: access.status === 401 ? '未登录' : '项目不存在' },
+        { status: access.status },
+      );
+    }
+
     await prisma.project.delete({ where: { uuid: params.id } });
     return NextResponse.json({ ok: true });
   } catch (err) {

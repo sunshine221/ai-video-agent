@@ -5,11 +5,16 @@ import { generateAndSaveImage } from '@/lib/ai/image';
 import { generateAndSaveTTS } from '@/lib/ai/tts';
 import { getOrCreate, clear } from '@/lib/ai/abort-registry';
 import { getVideoSource, upsertFrame } from '@/lib/frames';
+import { assertProjectAccess } from '@/lib/session';
+import { runDeterministicChecks } from '@/lib/ai/review';
 import type { Outline } from '@/types';
 
+const MAX_REVIEW_ROUNDS = 2; // 终检后，每帧最多自动修复几轮
+
 const schema = z.object({
-  projectId: z.string().uuid(),
+  projectId: z.string().min(1),
   frameIds: z.array(z.string()).optional(),   // 不传则生成全部
+  regen: z.boolean().optional(),              // 显式重新生成：跳过"已有产物"的 skip
 });
 
 /**
@@ -26,7 +31,15 @@ export async function POST(req: NextRequest) {
       headers: { 'content-type': 'application/json' },
     });
   }
-  const { projectId, frameIds } = parsed.data;
+  const { projectId, frameIds, regen } = parsed.data;
+
+  const access = await assertProjectAccess(projectId);
+  if (!access.ok) {
+    return new Response(
+      JSON.stringify({ error: access.status === 401 ? '未登录' : '项目不存在' }),
+      { status: access.status, headers: { 'content-type': 'application/json' } },
+    );
+  }
 
   const project = await prisma.project.findUnique({ where: { uuid: projectId } });
   if (!project || !project.outline) {
@@ -68,7 +81,7 @@ export async function POST(req: NextRequest) {
 
         const idx = outline.frames.findIndex(f => f.id === frame.id);
         const existing = newSources[idx];
-        if (existing?.imagePath) {
+        if (!regen && existing?.imagePath) {
           completed++;
           emit('skip', { frameId: frame.id, current: completed, total: targetFrames.length });
           continue;
@@ -132,6 +145,50 @@ export async function POST(req: NextRequest) {
           // 继续下一帧，不整体中断
         }
       }
+
+      // ===== 终检（Review）：图片模式只做确定性校验 + 自动修复，有界重试 =====
+      const targetIds = new Set(targetFrames.map(f => f.id));
+      emit('review_start', { total: targetFrames.length });
+      for (let round = 1; round <= MAX_REVIEW_ROUNDS && !signal.aborted; round++) {
+        const issues = runDeterministicChecks(outline, newSources, 'image')
+          .filter(it => targetIds.has(it.frameId) && it.category !== 'empty_narration');
+        if (issues.length === 0) break;
+        emit('review_round', { round, issues: issues.length, total: targetFrames.length });
+
+        for (const issue of issues) {
+          if (signal.aborted) break;
+          const idx = outline.frames.findIndex(o => o.id === issue.frameId);
+          if (idx < 0) continue;
+          const frame = outline.frames[idx];
+          emit('review_issue', { frameId: frame.id, category: issue.category, severity: issue.severity, issue: issue.issue });
+          try {
+            // 缺音频只补 TTS；缺画面则重生成图片 + TTS
+            if (issue.category === 'missing_audio') {
+              const tts = await generateAndSaveTTS({ projectId, frameId: frame.id, text: frame.narration, abortSignal: signal });
+              newSources[idx] = { ...newSources[idx], id: frame.id, audioPath: tts.url, audioDuration: tts.duration };
+              await upsertFrame(projectId, frame.id, idx, { audioPath: tts.url, audioDuration: tts.duration });
+            } else if (issue.category === 'missing_media') {
+              const img = await generateAndSaveImage({ projectId, frameId: frame.id, prompt: frame.imagePrompt || frame.title, abortSignal: signal });
+              let audioUrl = newSources[idx]?.audioPath;
+              let audioDur = newSources[idx]?.audioDuration;
+              if (!audioUrl) {
+                try {
+                  const tts = await generateAndSaveTTS({ projectId, frameId: frame.id, text: frame.narration, abortSignal: signal });
+                  audioUrl = tts.url; audioDur = tts.duration;
+                } catch (e) { console.error('[review] TTS 补齐失败', (e as Error).message); }
+              }
+              newSources[idx] = { id: frame.id, imagePath: img.url, audioPath: audioUrl, audioDuration: audioDur };
+              await upsertFrame(projectId, frame.id, idx, { imagePath: img.url, audioPath: audioUrl ?? null, audioDuration: audioDur ?? null });
+            }
+            emit('review_fixed', { frameId: frame.id, category: issue.category });
+          } catch (err) {
+            console.error(`[review] 修复失败 ${frame.id}`, (err as Error).message);
+          }
+        }
+      }
+      const unresolved = runDeterministicChecks(outline, newSources, 'image')
+        .filter(it => targetIds.has(it.frameId) && it.category !== 'empty_narration');
+      emit('review_done', { unresolved: unresolved.map(it => ({ frameId: it.frameId, issue: it.issue })) });
 
       emit('done', { completed, total: targetFrames.length });
       clear(projectId, 'image');

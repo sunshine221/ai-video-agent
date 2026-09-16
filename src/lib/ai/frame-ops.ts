@@ -25,15 +25,25 @@ const MODIFY_FRAME_SYSTEM = `你是一位视频脚本编辑。你需要根据用
 - 上一分镜、下一分镜的标题/旁白（保证衔接顺畅）
 - 用户的修改需求
 
+## ⭐ 旁白与画面描述的联动规则（最高优先级，务必遵守）
+画面（画面提示词 / 画面设计）是对旁白内容的可视化呈现，**旁白是内容来源，画面依附于旁白**。据此：
+- **本次修改改动了旁白** → 画面描述**必须**随新旁白重新设计，让画面表达的信息与新旁白一致；**禁止**沿用与旧旁白对应的旧画面描述。
+- **本次修改只涉及画面（画面提示词 / 画面设计）、旁白未变** → 旁白**必须原样返回、一字不改**，只调整画面描述。
+- 判断依据是用户这次的修改需求指向什么：指向旁白/内容/文案的，视为旁白改动；只指向画面/视觉/布局/动效的，视为画面改动。
+
 ## 输出要求
 - 输出严格 JSON：
 {
   "title": "调整后的分镜标题（不超过 15 字）",
   "narration": "调整后的旁白（中文，15-60 字）",
   "imagePrompt": "调整后的画面提示词（image 模式：英文 30-100 词，包含全局画风前缀）",
-  "htmlPrompt": "调整后的网页动画描述（html 模式：中文，描述要展示什么/动作/风格/配色）"
+  "visualSummary": "html 模式：这一镜的核心视觉主张（一句话）",
+  "layout": "html 模式：空间构图（主体位置/主次/留白，不写颜色）",
+  "animation": "html 模式：动作与分步节奏（不写死秒数、不写颜色）",
+  "transition": "html 模式：如何衔接下一镜"
 }
-- 只输出当前模式需要的字段：image 模式必填 imagePrompt，html 模式必填 htmlPrompt
+- 只输出当前模式需要的字段：image 模式必填 imagePrompt；html 模式必填 visualSummary/layout/animation/transition 四个字段（不要输出 imagePrompt）
+- html 模式的四个字段禁止出现任何颜色/背景/配色/材质/色调描述，也不要写死动画秒数（风格由全局模板统一）
 - 修改后的内容要和上下文（上一镜/下一镜/整体脚本）自然衔接
 - 不要任何 JSON 之外的内容
 `;
@@ -68,7 +78,9 @@ ${globalScript}
 【待修改分镜 (#${frame.index})】
 标题：${frame.title}
 旁白：${frame.narration}
-${type === 'image' ? `画面提示词：${frame.imagePrompt || ''}` : `网页动画描述：${frame.htmlPrompt || ''}`}
+${type === 'image'
+    ? `画面提示词：${frame.imagePrompt || ''}`
+    : `视觉主张：${frame.visualSummary || ''}\n布局构图：${frame.layout || ''}\n动作与分步：${frame.animation || ''}\n与下一镜衔接：${frame.transition || ''}`}
 
 【上一分镜】${prev ? `#${prev.index} ${prev.title}：${prev.narration}` : '（无）'}
 【下一分镜】${next ? `#${next.index} ${next.title}：${next.narration}` : '（无）'}
@@ -103,11 +115,15 @@ const ADD_FRAME_SYSTEM = `你是一位视频脚本编辑。你需要根据当前
   "title": "新分镜标题（不超过 15 字）",
   "narration": "新分镜旁白（中文，15-60 字）",
   "imagePrompt": "画面提示词（image 模式：英文 30-100 词，包含全局画风前缀）",
-  "htmlPrompt": "网页动画描述（html 模式：中文，描述要展示什么/动作/风格/配色）",
+  "visualSummary": "html 模式：这一镜的核心视觉主张（一句话）",
+  "layout": "html 模式：空间构图（主体位置/主次/留白，不写颜色）",
+  "animation": "html 模式：动作与分步节奏（不写死秒数、不写颜色）",
+  "transition": "html 模式：如何衔接下一镜",
   "afterIndex": 在第几镜之后插入（1-based；如果 afterIndex=0 则 AI 自己决定最合适的位置）
 }
-- 旁白和画面提示词要和上下文衔接自然，不要重复已有分镜的内容
-- image 模式必填 imagePrompt，html 模式必填 htmlPrompt
+- 旁白和画面设计要和上下文衔接自然，不要重复已有分镜的内容
+- image 模式必填 imagePrompt；html 模式必填 visualSummary/layout/animation/transition（不要输出 imagePrompt）
+- html 模式的四个字段禁止出现任何颜色/背景/配色/材质/色调描述，也不要写死动画秒数
 - 保持与全局画风/视觉风格一致
 - 不要任何 JSON 之外的内容
 `;
@@ -116,7 +132,10 @@ export interface NewFrameContent {
   title: string;
   narration: string;
   imagePrompt?: string;
-  htmlPrompt?: string;
+  visualSummary?: string;
+  layout?: string;
+  animation?: string;
+  transition?: string;
   afterIndex: number;       // 1-based，AI 决定时也回填
 }
 

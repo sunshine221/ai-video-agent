@@ -6,7 +6,7 @@ import { formatDuration, cn } from '@/lib/utils';
 import type { ProjectDetail, FrameSource } from '@/types';
 import { useEffect, useRef, useState } from 'react';
 
-type ExportStatus = 'idle' | 'preparing' | 'prompting' | 'countdown' | 'recording' | 'finalizing' | 'failed';
+type ExportStatus = 'idle' | 'preparing' | 'rendering' | 'encoding' | 'finalizing' | 'failed';
 
 interface PlayerBarProps {
   project: ProjectDetail;
@@ -142,7 +142,7 @@ export function PlayerBar({
             variant="outline"
             onClick={onExport}
             disabled={!hasFrames}
-            title="录屏导出视频"
+            title="导出带声音的 MP4 视频"
           >
             <Download className="mr-1 h-3.5 w-3.5" />
             导出视频
