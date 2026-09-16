@@ -1,10 +1,13 @@
 # 部署文档 —— AI 视频制作智能体
 
-本文档描述在腾讯云服务器（Ubuntu 22.04）上通过 Docker Compose 部署本项目，并通过域名 + HTTPS 对外访问。
+本文档描述在腾讯云服务器（Ubuntu）上通过 Docker Compose 部署本项目，并通过域名 + HTTPS 对外访问。
 
 - 部署方式：Docker Compose，在服务器上构建镜像（`up -d --build`）
 - 组件：Next.js 应用 + MySQL 8.0（均为容器）+ 宿主机 Nginx 反向代理 + Let's Encrypt 证书
 - 参考配置：4 核 4G / 40G SSD 足够运行
+- 基础镜像：`node:20-bookworm`，Chromium 与系统依赖在构建时安装（不再用 1G+ 的 Playwright 官方镜像）
+
+> 首次部署强烈建议先通读第 10 节「踩坑与经验总结」——境内网络环境下几乎每一步都要换国内源，否则会卡在各种超时上。
 
 ---
 
@@ -19,6 +22,7 @@
 7. [日常更新](#7-日常更新)
 8. [数据库备份与远程访问](#8-数据库备份与远程访问)
 9. [常见问题](#9-常见问题)
+10. [踩坑与经验总结](#10-踩坑与经验总结)
 
 ## 1. 服务器准备
 
@@ -32,6 +36,22 @@ sudo systemctl enable --now docker
 docker compose version   # 确认 compose 可用
 ```
 
+**配置镜像加速器（必做，否则拉 docker.io 镜像会超时）**。境内直连 Docker Hub 极慢甚至失败，创建 `/etc/docker/daemon.json`：
+
+```bash
+sudo mkdir -p /etc/docker
+sudo tee /etc/docker/daemon.json > /dev/null <<'EOF'
+{
+  "registry-mirrors": [
+    "https://mirror.ccs.tencentyun.com"
+  ]
+}
+EOF
+sudo systemctl restart docker
+```
+
+> `mirror.ccs.tencentyun.com` 是腾讯云容器镜像加速器，在腾讯云服务器上走内网、不消耗公网流量。验证：`docker run --rm hello-world` 能成功拉取即 OK。
+
 安装 git：
 
 ```bash
@@ -44,6 +64,11 @@ sudo apt update && sudo apt install -y git
 git clone https://github.com/sunshine221/ai-video-agent.git
 cd ai-video-agent
 ```
+
+> **境内 clone GitHub 慢/失败**：加个加速前缀即可，例如
+> `git clone https://ghfast.top/https://github.com/sunshine221/ai-video-agent.git`
+> （加速站点可能不稳定，失效时换其它 GitHub 代理前缀）。克隆完成后建议把 remote 改回原始地址，方便后续 `git pull`：
+> `git remote set-url origin https://github.com/sunshine221/ai-video-agent.git`
 
 ## 3. 配置环境变量
 
@@ -80,7 +105,9 @@ openssl rand -base64 32
 docker compose up -d --build
 ```
 
-首次会下载 Playwright 基础镜像（1G+）并构建，耗时较久。启动后应用只监听 `127.0.0.1:3000`，MySQL 只监听 `127.0.0.1:3306`，都不直接对外。
+首次构建会拉取 `node:20-bookworm`、装依赖、下载 Chromium、装系统库并跑 `next build`，全流程约 5 分钟（换过国内源后）。Dockerfile 已内置国内源加速（apt 换腾讯云内网源、npm 换 npmmirror、Chromium/ffmpeg 二进制走 cdn.npmmirror.com），无需手动干预。启动后应用只监听 `127.0.0.1:3000`，MySQL 只监听 `127.0.0.1:3306`，都不直接对外。
+
+> 分层缓存：浏览器二进制、系统依赖只依赖 `package.json`/playwright 版本，不依赖业务代码。改代码重新部署时这些重活命中缓存，只重跑 `next build`，几十秒完成。
 
 查看日志确认迁移成功、应用就绪：
 
@@ -102,15 +129,22 @@ curl -I http://127.0.0.1:3000
 sudo apt install -y nginx certbot python3-certbot-nginx
 ```
 
-创建 `/etc/nginx/sites-available/ai-video`（把 `your-domain.com` 换成你的域名）：
+先确认域名已解析到本服务器公网 IP（两条应一致）：
+
+```bash
+curl -s https://ipinfo.io/ip; echo   # 本机公网 IP
+dig +short your-domain.com           # 域名解析结果
+```
+
+创建 `/etc/nginx/sites-available/your-domain.com`（把 `your-domain.com` 换成你的域名）：
 
 ```nginx
 server {
     listen 80;
-    server_name your-domain.com;
+    server_name your-domain.com www.your-domain.com;
 
-    # 导出的 MP4 / 上传较大，放开体积限制（对应 next.config 的 20mb）
-    client_max_body_size 50m;
+    # 上传大文件（视频素材）放宽限制
+    client_max_body_size 200m;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
@@ -119,29 +153,38 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-
-        # 生成/导出是 SSE 长任务：关闭缓冲、加长超时
-        proxy_buffering off;
-        proxy_cache off;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        # 生成/导出等长耗时任务，放宽超时
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
     }
 }
 ```
 
-启用站点并申请证书：
+启用站点、去掉默认站点并申请证书：
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/ai-video /etc/nginx/sites-enabled/
+sudo ln -sf /etc/nginx/sites-available/your-domain.com /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 
+# 先测 80 端口反代是否通（应返回 307 跳转登录页）
+curl -I http://your-domain.com
+
 # certbot 自动改写配置加上 443 与证书，并配置自动续期
-sudo certbot --nginx -d your-domain.com
+# 交互中：填邮箱 → 同意条款 → 询问是否重定向 HTTP→HTTPS 时选 2（Redirect）
+sudo certbot --nginx -d your-domain.com -d www.your-domain.com
 ```
 
-完成后访问 `https://your-domain.com`。
+完成后访问 `https://your-domain.com`，地址栏应带小锁。验证：
 
-> 前提：域名已完成备案（腾讯云境内服务器要求），且 DNS 已解析到服务器公网 IP。
+```bash
+curl -I https://your-domain.com   # 307 跳转登录页
+curl -I http://your-domain.com    # 301 自动跳 HTTPS
+```
+
+> 前提：域名已完成备案（腾讯云境内服务器要求），DNS 已解析到服务器公网 IP，且**腾讯云安全组已放行 80、443**。若 `curl -I http://your-domain.com` 卡住/超时，基本就是安全组没放行 80。
 
 ## 6. 创建账号
 
@@ -227,3 +270,41 @@ sudo mkswap /swapfile && sudo swapon /swapfile
 
 **登录后跳转异常**
 检查 `NEXTAUTH_URL` 是否填成了正式的 `https://域名`，而非 `localhost`。
+
+## 10. 踩坑与经验总结
+
+本节记录首次部署实际踩到的坑与解决方案，核心结论：**境内网络环境下，从拉镜像到装依赖的每一步默认都会走境外源，几乎都要换国内源**。Dockerfile 里的加速已经内置，但服务器层面（Docker、git、apt）的加速需要手动配一次。
+
+### 关键坑位一览
+
+| 环节 | 症状 | 根因 | 解决 |
+|------|------|------|------|
+| 拉 docker.io 镜像 | `hello-world` / `node:20` 拉取 i/o timeout | 境内直连 Docker Hub 极慢 | 配 `/etc/docker/daemon.json` 加腾讯云镜像加速器（见第 1 节） |
+| git clone GitHub | 连接被重置 / 超时 | GitHub 境内不稳定 | 用 `ghfast.top` 等加速前缀（见第 2 节） |
+| `playwright install-deps`（apt 装系统库）| 卡在 `Get:.. deb.debian.org` 300s+ | Debian 官方源境内慢 | Dockerfile 已换腾讯云内网 apt 源，从 314s 降到 25s |
+| `npm ci` 装 ffmpeg-static | `Request timed out after 30019ms` | ffmpeg 二进制默认从 GitHub 下载 | Dockerfile 已设 `FFMPEG_BINARIES_URL` 走 cdn.npmmirror.com |
+| `next build` | `Environment variable not found: DATABASE_URL` | `/api/styles` 读库路由被静态预渲染 | 该路由已加 `export const dynamic = 'force-dynamic'` |
+| Playwright 官方镜像 | `mcr.microsoft.com` 拉取极慢（1G+） | 官方镜像大且境外 | 改用 `node:20-bookworm` + 构建时装 Chromium |
+
+### Dockerfile 里已内置的加速（无需再改）
+
+- **apt 源**：`sed` 把 `deb.debian.org` / `security.debian.org` 换成 `mirrors.tencentyun.com`（deb822 格式，改的是 `/etc/apt/sources.list.d/debian.sources`）
+- **npm 源**：`npm config set registry https://registry.npmmirror.com`
+- **Chromium 二进制**：`PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright`
+- **ffmpeg 二进制**：`FFMPEG_BINARIES_URL=https://cdn.npmmirror.com/binaries/ffmpeg-static`
+
+> 换源均指向腾讯云内网 / npmmirror，在腾讯云服务器上速度最快且不额外消耗公网流量。若换其它云厂商，把 `mirrors.tencentyun.com` 换成对应内网源即可（如阿里云 `mirrors.cloud.aliyuncs.com`）。
+
+### 经验
+
+1. **先配加速，再动手**。部署前先把 Docker 镜像加速器配好，能省掉后面反复超时的痛苦。
+2. **善用分层缓存**。Dockerfile 已把「装依赖 / 下载浏览器 / 装系统库」和「业务代码」分层。只要不改 `package.json`，改代码重新部署只重跑 `next build`，几十秒完成，不会重新下载浏览器。
+3. **构建慢先看卡在哪一步**。`docker compose up -d --build` 输出会显示当前在哪个 `RUN`，卡住基本都是某个源在境外。定位到具体命令再针对性换源，比盲目重试有效。
+4. **密码别用特殊字符**。`.env` 里的 `MYSQL_ROOT_PASSWORD` 含 `@` `:` `/` 等字符会破坏 `DATABASE_URL` 拼接，也容易在 shell 里出问题。用字母数字组合最省心。
+5. **改完 Dockerfile 记得提交**。服务器上临时改的加速配置要同步回仓库的 Dockerfile，否则下次全新部署又得重踩一遍。本项目的加速已全部提交，开箱即用。
+6. **安全组是隐形坑**。Nginx 配好但外网访问不了，八成是腾讯云安全组没放行 80/443，先查这里。
+
+### 安全提醒
+
+- **API Key 轮换**：`.env` 里的 AI 网关 Key 若在任何日志/对话/截图中暴露过，务必去控制台重新生成并替换，然后 `docker compose up -d` 重启 app。
+- **不要放行 3306**：MySQL 只绑定 `127.0.0.1`，远程访问一律走 SSH 隧道（见第 8 节）。
