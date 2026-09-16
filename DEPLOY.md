@@ -158,6 +158,10 @@ server {
         # 生成/导出等长耗时任务，放宽超时
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
+        # SSE 流式生成（逐帧进度）：必须关闭响应缓冲，否则 nginx 会把进度事件
+        # 攒在缓冲区里，前端在整个任务结束前看不到任何进度（表现为“卡住无反应”）。
+        proxy_buffering off;
+        proxy_cache off;
     }
 }
 ```
