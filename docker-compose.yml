@@ -1,20 +1,49 @@
 version: '3.8'
+
 services:
   mysql:
     image: mysql:8.0
     container_name: ai-video-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: password
-      MYSQL_DATABASE: ai_video
-    ports:
-      - '3306:3306'
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ai_video}
+    # 仅供容器内网访问，不对外暴露 3306（更安全）。
+    # 如需宿主机用客户端连库调试，取消下面两行注释。
+    # ports:
+    #   - '127.0.0.1:3306:3306'
     volumes:
       - mysql_data:/var/lib/mysql
     command:
       --default-authentication-plugin=mysql_native_password
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-p${MYSQL_ROOT_PASSWORD:-password}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-video-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # 覆盖 .env 里的 DATABASE_URL：容器内通过服务名 mysql 连库
+      DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-ai_video}
+    ports:
+      # 仅绑定到宿主机本地，由 Nginx 反向代理对外提供 HTTPS
+      - '127.0.0.1:3000:3000'
+    volumes:
+      # 持久化生成的图片/音频/导出产物
+      - ./data:/app/data
+    depends_on:
+      mysql:
+        condition: service_healthy
 
 volumes:
   mysql_data:
