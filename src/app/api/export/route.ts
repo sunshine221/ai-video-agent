@@ -102,6 +102,9 @@ export async function POST(req: NextRequest) {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache, no-transform',
       'connection': 'keep-alive',
+      // 显式告知 nginx 等反向代理不要缓冲此响应，否则 SSE 进度事件会被攒住，
+      // 前端在任务结束前看不到任何逐帧进度（表现为“卡住无反应”）。
+      'x-accel-buffering': 'no',
     },
   });
 }

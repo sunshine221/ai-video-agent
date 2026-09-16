@@ -102,7 +102,10 @@ export async function callAITool(opts: {
         parameters: t.parameters,
       },
     })),
-    tool_choice: 'auto',
+    // 强制模型必须从工具集里选一个调用。部分模型（如 qwen3.x-flash）在 'auto'
+    // 下倾向于直接回文本、不调工具，导致意图分析永远兜底为 clarify，创作流程走不通。
+    // 意图工具集已覆盖澄清(ask_user)/不支持(not_supported)，强制调用不会误伤兜底。
+    tool_choice: 'required',
     messages: [
       { role: 'system', content: system },
       { role: 'user', content: user },
