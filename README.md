@@ -26,22 +26,16 @@
 
 它内置了这些能力：
 
+- 邮箱 + 密码注册登录，基于 NextAuth（JWT 会话），项目数据按用户隔离
 - 对话式创作入口，自动判断用户是在“生成大纲”还是“增删改某个分镜”
 - 自动生成视频大纲，包含标题、旁白、分镜提示词
 - 图片模式下自动生成分镜图、旁白音频和字幕
 - HTML 模式下自动生成可播放的网页动画分镜
 - 支持单个分镜重生成，不必整条视频推倒重来
-- 支持长任务中断，已完成内容会保留
+- 支持长任务（生成 / 导出）中断，已完成内容会保留
 - 本地保存图片、音频等产物
-- 浏览器内预览，并支持 MP4 导出
+- 浏览器内预览，并支持服务端渲染合成 MP4 导出
 
-## 更多完整功能
-
-如果你希望体验更丰富、更完整、更稳定的 AI 动画与视频创作能力，欢迎访问 [SVG Animate](https://svganimate.ai)：
-
-![SVG Animate 预览](docs/images/svganimate-preview.png)
-
-相较于当前这个实验性仓库版本，`svganimate.ai` 提供了更完整的在线创作体验、更多可视化能力和更成熟的工作流。
 
 ## 内置三种风格
 
@@ -54,14 +48,17 @@
 - `暖色系（warm-story）`
   奶油米色、暖橘琥珀、衬线标题和大留白，适合人文、生活方式、故事表达
 
-风格配置位于 [src/lib/styles/presets.ts](/Users/xuanyuan/Documents/AI-Program/minimax_test/M3/ai-video-test/src/lib/styles/presets.ts)。
+风格种子数据位于 `src/lib/styles/presets.ts`（写入数据库的初始数据），运行时统一从数据库 `style_preset` 表读取。
 
 ## 技术栈
 
-- `Next.js 14` + `React 18` + `TypeScript`
+- `Next.js 14`（App Router）+ `React 18` + `TypeScript`
 - `Prisma` + `MySQL 8`
-- `Tailwind CSS`
+- `Tailwind CSS` + `Radix UI`
+- `NextAuth`（邮箱密码 + JWT 会话）
+- `Zustand`（全局状态）+ `TanStack Query`（数据请求）
 - `OpenAI SDK`（对接 OpenAI 兼容接口）
+- `Playwright` + `ffmpeg-static`（服务端渲染合成 MP4）
 - `Vitest`
 
 ## 快速开始
@@ -101,27 +98,34 @@ AI_BASE_URL="https://your-openai-compatible-gateway/v1"
 AI_API_KEY="sk-xxx"
 AI_MODEL="gemini-3-flash-preview"
 
-TTS_VOICE="nova"
+TTS_PROVIDER="openai"
 TTS_MODEL="qwen3-tts-flash"
+TTS_VOICE="nova"
 
+IMAGE_PROVIDER="evolink"
+IMAGE_MODEL="z-image-turbo"
 IMAGE_API_BASE_URL="https://api.evolink.ai"
 IMAGE_API_KEY="your-image-key"
 
 NEXT_PUBLIC_APP_NAME="AI 视频制作智能体"
+
+# 生产环境务必替换为随机长字符串：openssl rand -base64 32
+NEXTAUTH_SECRET="please-change-me-to-a-random-secret"
+NEXTAUTH_URL="http://localhost:3000"
 ```
 
 ### 4. 初始化数据库
 
-开发环境可以直接推送 schema：
-
-```bash
-npx prisma db push
-```
-
-如果你更偏向迁移方式：
+推荐使用迁移方式，会一并建表并写入内置风格种子数据：
 
 ```bash
 npx prisma migrate deploy
+```
+
+如果只想快速拉起 schema（不含风格种子数据），可用：
+
+```bash
+npx prisma db push
 ```
 
 ### 5. 启动项目
@@ -130,27 +134,34 @@ npx prisma migrate deploy
 npm run dev
 ```
 
-浏览器打开 [http://localhost:3000](http://localhost:3000)。
+浏览器打开 [http://localhost:3000](http://localhost:3000)。首次使用先在 `/login` 页面注册账号并登录，然后即可开始创作。
 
 ## 环境变量说明
 
 | 变量名 | 必填 | 说明 |
 | --- | --- | --- |
 | `DATABASE_URL` | 是 | Prisma 连接 MySQL 的地址 |
-| `AI_BASE_URL` | 是 | OpenAI 兼容接口的基础地址，代码会直接调用聊天与 TTS 接口 |
+| `AI_BASE_URL` | 是 | OpenAI 兼容接口的基础地址，用于意图分析、大纲生成、HTML 生成等 |
 | `AI_API_KEY` | 是 | 上述网关对应的 API Key |
-| `AI_MODEL` | 是 | 主文本模型，用于意图分析、大纲生成、HTML 生成等 |
-| `TTS_VOICE` | 否 | TTS 音色，默认 `nova` |
+| `AI_MODEL` | 是 | 主文本模型，默认 `gemini-3-flash-preview` |
+| `NEXTAUTH_SECRET` | 是 | 加密会话 JWT 的密钥，生产环境务必替换为随机长字符串 |
+| `NEXTAUTH_URL` | 是 | 站点地址，本地开发即 `http://localhost:3000` |
+| `TTS_PROVIDER` | 否 | TTS 接口风格，`openai`（默认）或 `dashscope` |
 | `TTS_MODEL` | 否 | TTS 模型名，默认 `qwen3-tts-flash` |
-| `IMAGE_API_BASE_URL` | 图片模式必填 | 图片生成服务地址，当前图片链路按 `z-image-turbo` 适配 |
+| `TTS_VOICE` | 否 | TTS 音色，默认 `nova` |
+| `TTS_BASE_URL` / `TTS_API_KEY` | 否 | TTS 独立地址与密钥，缺省回退到 `AI_BASE_URL` / `AI_API_KEY` |
+| `IMAGE_PROVIDER` | 图片模式必填 | 图片接口风格，`evolink`（默认，两阶段任务）或 `dashscope`（同步生图） |
+| `IMAGE_MODEL` | 否 | 图片模型，默认 `z-image-turbo` |
+| `IMAGE_SIZE` | 否 | 图片比例，默认 `16:9` |
+| `IMAGE_API_BASE_URL` | 图片模式必填 | 图片生成服务地址 |
 | `IMAGE_API_KEY` | 图片模式必填 | 图片生成服务密钥 |
 | `NEXT_PUBLIC_APP_NAME` | 否 | 前端顶部显示的应用名称 |
 
 说明：
 
 - `AI_BASE_URL` 需要是 OpenAI 兼容协议地址。
+- TTS 默认复用 `AI_BASE_URL` / `AI_API_KEY`，如需单独的语音账号再配置 `TTS_BASE_URL` / `TTS_API_KEY`。
 - 图片模式依赖单独的图片接口；如果只体验 HTML 模式，可以暂不配置图片相关变量。
-- `IMAGE_API_BASE_URL` 可以写成 `https://api.evolink.ai`，代码会自动补成 `/v1`。
 
 ## 使用方式
 
@@ -192,19 +203,27 @@ npm run db:studio
 
 ```text
 .
-├── prisma/                    # Prisma schema 与迁移
+├── prisma/                    # Prisma schema 与迁移（含风格种子）
+├── scripts/                   # 端口释放、风格 demo 同步、诊断脚本
 ├── src/
-│   ├── app/                   # Next.js App Router 与 API 路由
+│   ├── app/
+│   │   ├── api/               # 认证、对话、大纲、分镜、导出、静态资源路由
+│   │   ├── login/            # 登录 / 注册页
+│   │   ├── projects/[id]/    # 创作工作台页
+│   │   └── page.tsx          # 首页（选择创作模式）
 │   ├── components/            # UI、工作台、播放器、风格选择器
 │   ├── hooks/                 # 生成流程相关 hooks
 │   ├── lib/
-│   │   ├── ai/                # AI、TTS、图片、HTML 生成封装
+│   │   ├── ai/                # AI、TTS、图片、HTML 生成、任务管理封装
+│   │   ├── export/            # 服务端渲染 + ffmpeg 合成 MP4
 │   │   ├── prompts/           # Prompt 模板
-│   │   ├── styles/            # 内置风格预设
+│   │   ├── styles/            # 内置风格预设（种子数据）
+│   │   ├── auth.ts            # NextAuth 配置
 │   │   ├── subtitle.ts        # 字幕切片
 │   │   └── env.ts             # 环境变量校验
 │   ├── stores/                # Zustand 状态
-│   └── types/                 # 共享类型
+│   ├── types/                 # 共享类型
+│   └── middleware.ts          # 登录路由守卫
 ├── data/
 │   ├── audio/                 # 本地保存的旁白音频
 │   └── images/                # 本地保存的分镜图片
@@ -214,14 +233,16 @@ npm run db:studio
 
 ## 运行机制
 
+- 注册 / 登录：`/api/auth/register`、`/api/auth/[...nextauth]`、`/api/auth/change-password`
 - 对话入口：`/api/agent/chat`
 - 大纲生成：`/api/outline`
-- 图片分镜生成：`/api/frames/image`
-- HTML 分镜生成：`/api/frames/html`
+- 图片分镜生成：`/api/frames/image`（`/abort` 中断）
+- HTML 分镜生成：`/api/frames/html`（`/abort` 中断）
+- MP4 导出：`/api/export`（`/abort` 中断）
 - 风格列表：`/api/styles`
 - 静态资源回放：`/api/data/...`
 
-项目会把生成结果写入数据库，同时把图片和音频落到本地 `data/` 目录。HTML 分镜则存入数据库里的 `videoSource` 字段。
+数据模型：`user`（账号）、`project`（项目，含 `brief` 创作简报与 `outline` 大纲）、`frame`（逐镜产物，含 `htmlCode` / `imagePath` / `audioPath`）、`message`（对话记录）、`style_preset`（风格预设）。项目、大纲等结构化数据写入数据库，图片和音频等二进制产物落到本地 `data/` 目录。
 
 ## 开源使用建议
 
